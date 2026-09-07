@@ -152,11 +152,20 @@ def emit_timing(d):
     t.append("/* $2F3A, indexed by the round number $615F */\n")
     t.append("static const uint8_t ROUND_TRAVERSALS[3]={%s};\n"
              % ",".join(str(d[0x2F3A + k]) for k in range(3)))
-    t.append("/* $58AD: the referee's step in x per frame */\n")
-    t.append("static const uint8_t REF_STEP[12]={%s};\n"
+    t.append("/* The referee does NOT move. $6159 is how far through one of his signalling\n"
+             " * actions he is: $58EF starts one, setting $6159 to $28 or $DC and $615A to a\n"
+             " * step from $58AD, and $5807 walks it to $F0 or $0A. Reaching the end is what\n"
+             " * decrements the round counter $6154 ($5834), so a round is a number of his\n"
+             " * actions, not of anything geometric. $58A1 picks which of three actions, by\n"
+             " * round number and a random draw. */\n")
+    t.append("static const uint8_t REF_ACTION[12]={%s};   /* $58A1 */\n"
+             % ",".join(str(d[0x58A1 + k]) for k in range(12)))
+    t.append("static const uint8_t REF_STEP[12]={%s};     /* $58AD */\n"
              % ",".join(str(d[0x58AD + k]) for k in range(12)))
-    t.append("#define REF_X_LEFT  0x0A\n#define REF_X_RIGHT 0xF0\n")
-    t.append("#define REF_X_START_L 0x28\n#define REF_X_START_R 0xDC\n")
+    t.append("static const uint8_t REF_SIDE[12]={%s};     /* $5885 */\n"
+             % ",".join(str(d[0x5885 + k]) for k in range(12)))
+    t.append("#define REF_END_LOW   0x0A\n#define REF_END_HIGH  0xF0\n")
+    t.append("#define REF_START_UP   0x28\n#define REF_START_DOWN 0xDC\n")
     t.append("/* $3BF9: the main loop only takes a game tick once the vertical blank has\n"
              " * counted more than this many frames into $6121, so the fighters advance at\n"
              " * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.\n"

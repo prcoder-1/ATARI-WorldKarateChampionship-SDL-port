@@ -99,8 +99,13 @@ static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
 static int speedIndex=GAME_TICK_DEFAULT;  /* $619B: which divider is in use */
 static int clockTick;      /* $6141: frames until the next second */
-static int refX, refDir;   /* $6159/$615B: the referee, which is the round clock */
+/* $6159/$615B/$615A/$615C/$615E: the referee's current action -- how far through it he
+ * is, which way it counts, its step, which action, and whether one is running. Finishing
+ * an action is what ticks the round counter down. */
+static int refProgress, refDir, refStep, refBusy;
+static void refereeBegin(void);
 static int roundIndex;     /* $615F */
+static int refTurns;       /* $6162: completed referee actions */
 static int bg=0;
 static int dan=0;
 static char banner[64]="";
@@ -157,24 +162,22 @@ static void drawFighter(const Fighter* f, Col gi)
 }
 
 /* ---------------- the referee ----------------
- * He paces the arena and each turn takes one off the round counter, exactly as $5807
- * has it. His x lives in $6159 and turns at $0A and $F0; how those map to HPOS is not
- * pinned down, so the range is calibrated onto the visible playfield here -- which is
- * what he visibly does. His band and his sprite are captured (extract_referee.py). */
+ * He does not move. An earlier version of this port had him pacing the arena, on a
+ * misreading of $6159 as his position; it is the progress of one of his signalling
+ * actions ($58EF starts one, $5807 walks the counter, $5834 ends it). His objects sit at
+ * fixed positions taken from $58D1, and over 187 captured frames he is in the same place
+ * in 181 of them. He is drawn where he stands. */
 static void drawReferee(void)
 {
     if(gstate!=G_FIGHT && gstate!=G_POINT) return;
-    int span = SCENE_RIGHT - SCENE_LEFT - REF_W*REF_CLOCKS_PER_PX;
-    int left = SCENE_LEFT + (refX - REF_X_LEFT) * span / (REF_X_RIGHT - REF_X_LEFT);
     for(int y=0;y<REF_H;y++)
         for(int k=0;k<REF_W;k++){
             uint8_t v=REF_PX[y*REF_W+k];
             if(!v) continue;
-            int col = refDir ? (REF_W-1-k) : k;    /* he faces the way he walks */
             Col c = (v==SHAPE_IDX_GI)?rgb(235,235,235)
                   : (v==SHAPE_IDX_SKIN)?COL_SKIN : COL_OUTLINE;
             setcol(c);
-            fillrect(left+col*REF_CLOCKS_PER_PX, REF_Y+y, REF_CLOCKS_PER_PX, 1);
+            fillrect(REF_X+k*REF_CLOCKS_PER_PX, REF_Y+y, REF_CLOCKS_PER_PX, 1);
         }
 }
 
@@ -298,22 +301,40 @@ static void newBout(void)
     roundClock = p2.isCPU ? T_CLOCK_1P : T_CLOCK_2P;
     clockTick = T_CLOCK_TICK;
     tickCounter = 0;
-    refX=REF_X_START_L; refDir=0;
+    refBusy=0; refTurns=0; refereeBegin();
     resetPositions();
     gstate=G_FIGHT;
    }
 
-/* $5807: the referee paces the arena; every turn takes one traversal off the round. */
+/* $58EF: begin one of the referee's three signalling actions. Which one comes from
+ * $58A1, by round number and a random draw; its speed from $58AD; which way its progress
+ * counter runs from $5885. He does not move: this is a timer, not a walk. */
+static void refereeBegin(void)
+{
+    int i = (roundIndex*4 + (int)(rnd()&3)) % 12;
+    /* REF_ACTION[i] picks which of his three signals this is; they differ in the
+     * markers and the sign, not in his figure, of which only one pose was captured. */
+    refStep   = REF_STEP[i];
+    refDir    = REF_SIDE[refTurns % 12] & 1;
+    refProgress = refDir ? REF_START_DOWN : REF_START_UP;
+    refBusy = 1;
+}
+
+/* $5807: advance the current action. Returns 1 when one completes, which is what $5834
+ * uses to take one off the round counter. */
 static int refereeStep(void)
 {
-    int step=REF_STEP[0];
-    refX += refDir ? -step : step;
-    if(refX>=REF_X_RIGHT || refX<=REF_X_LEFT){
-        refDir^=1;
-        refX = refDir ? REF_X_RIGHT : REF_X_LEFT;
-        return 1;
+    if(!refBusy){ refereeBegin(); return 0; }
+    if(refDir){
+        refProgress -= refStep;
+        if(refProgress >= REF_END_LOW) return 0;
+    } else {
+        refProgress += refStep;
+        if(refProgress < REF_END_HIGH) return 0;
     }
-    return 0;
+    refBusy = 0;
+    refTurns++;
+    return 1;
 }
 
 /* $2FFA/$3004: a scoring blow freezes play and forces the loser into move 17 or 18,

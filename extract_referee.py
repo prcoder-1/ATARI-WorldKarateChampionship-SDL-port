@@ -3,13 +3,15 @@
 Emit the referee as C data.
 
 The referee is a third figure, drawn from the same Player/Missile hardware as the two
-fighters but in its own scanline band, above them and below the playfield. He paces the
-arena, and each turn he makes takes one off the round counter ($6154) -- so he is the
-round clock as well as scenery. $5807 moves him:
+fighters but in its own scanline band, above them and below the playfield.
 
-    $6159  his x, stepping by $615A ($58AD, normally 2)
-    $615B  direction; he turns at $F0 going right and $0A going left
-    $6154  decremented on each turn, at $5834
+**He stands still.** $6159 is not his position -- it is how far through one of his
+signalling actions he is. $58EF starts an action, choosing it from $58A1 by round and a
+random draw, setting $6159 to $28 or $DC and $615A to a step from $58AD; $5807 then walks
+the counter to $F0 or $0A, and reaching the end decrements the round counter $6154
+($5834) and clears the busy flag $615E. His objects' positions come from $58D1 into
+$B3..$BB and do not change. Measured over 187 captured frames, he is at the same place in
+181 of them; the six exceptions are the announcement sign, not him.
 
 He is captured rather than decoded: his graphics do not come from the fighters' shape
 table, and $595A only draws the small pointer arrows that go with him. Frames where both
@@ -33,7 +35,6 @@ OUTLINE = (4, 4, 4)
 IDX_GI, IDX_SKIN, IDX_OUTLINE = 1, 2, 3
 BAND_TOP, BAND_BOT = 130, 172      # his band: below the playfield, above the fighters
 CLOCKS_PER_PX = 2
-X_ORIGIN = 28                      # the same mapping the fighters use: clock = 2*x + 28
 OUT = "generated/referee.h"
 
 
@@ -95,9 +96,15 @@ def main():
     # the pose the most frames agree on
     best = max(seen.values(), key=len)
     g, y0, x0, name = best[0]
-    print("referee: %dx%d, top scanline %d, agreed by %d of %d frames (%s)"
-          % (g.shape[1], g.shape[0], y0, len(best), len(files), name))
-    print("  %d distinct appearances in all; the rest are him mid-stride or with a sign"
+    places = {}
+    for group in seen.values():
+        for _g, gy, gx, _n in group:
+            places[(gx, gy)] = places.get((gx, gy), 0) + 1
+    print("referee: %dx%d at clock %d, scanline %d, agreed by %d of %d frames (%s)"
+          % (g.shape[1], g.shape[0], x0, y0, len(best), len(files), name))
+    print("  positions seen: %s -- he does not move"
+          % ", ".join("%s x%d" % (k, v) for k, v in sorted(places.items())))
+    print("  %d distinct appearances in all; the other is the announcement sign"
           % len(seen))
     for r in g:
         print("    " + "".join(" .oO"[v] for v in r))
@@ -106,14 +113,17 @@ def main():
     out.append("/* referee.h - the referee, captured from the screen.\n"
                " *\n"
                " * A third figure on the same Player/Missile hardware as the fighters, in his\n"
-               " * own scanline band. He paces the arena and each turn takes one off the round\n"
-               " * counter $6154, so he is the round clock as well ($5807).\n"
+               " * own scanline band. He STANDS STILL and signals from the spot: $6159 is how\n"
+               " * far through one of his three actions he is, not where he is, and reaching\n"
+               " * the end of that counter is what takes one off the round counter $6154\n"
+               " * ($5807/$58EF/$5834).\n"
                " * GENERATED FILE - do not edit; re-run extract_referee.py instead. */\n")
     out.append("#ifndef REFEREE_H_DATA\n#define REFEREE_H_DATA\n#include <stdint.h>\n")
-    out.append("#define REF_W %d\n#define REF_H %d\n#define REF_Y %d\n"
-               % (g.shape[1], g.shape[0], y0))
-    out.append("#define REF_CLOCKS_PER_PX %d\n#define REF_X_ORIGIN %d\n"
-               % (CLOCKS_PER_PX, X_ORIGIN))
+    out.append("/* He does not move: this is where he stands, in colour clocks and\n"
+               " * scanlines, measured from the captures. */\n")
+    out.append("#define REF_W %d\n#define REF_H %d\n#define REF_Y %d\n#define REF_X %d\n"
+               % (g.shape[1], g.shape[0], y0, x0))
+    out.append("#define REF_CLOCKS_PER_PX %d\n" % CLOCKS_PER_PX)
     out.append("/* colour indices: 1 = gi, 2 = skin, 3 = outline */\n")
     out.append("static const uint8_t REF_PX[REF_H*REF_W]={\n")
     for r in g:

@@ -44,18 +44,43 @@ about the width is assumed. Each pose now also carries `x0`, where its ink start
 relative to the fighter's screen origin: the offset varies per pose, and drawing every
 pose flush left made the figure jitter as the animation ran.
 
-### The referee
+### The referee -- he stands still
 
 A third figure, on the same Player/Missile hardware but in his own scanline band between
-the playfield and the fighters. `$5807` paces him: `$6159` steps by `$615A` (`$58AD`,
-normally 2) and turns at `$F0` and `$0A`, and **each turn decrements `$6154`** -- so he
-is the round counter as well as scenery.
+the playfield and the fighters.
+
+An earlier reading of `$5807` took `$6159` for his x and had him pacing the arena. It is
+not a position; it is **how far through one of his signalling actions he is**:
+
+```
+$58EF  LDA $615F / ASL / ASL          ; round number * 4
+       LDA $D20A / AND #$03 / ADC     ; + a random draw
+       LDA $58A1,y -> $615C           ; which of three actions
+       LDA $58AD,y -> $615A           ; how fast its counter runs
+       LDX #$28 ... LDX #$DC          ; which way, from $5885 and $6162
+       STX $6159                      ; the counter's start
+       LDA $58D1,x -> $B3..$BB        ; his objects' positions: FIXED
+       LDA #$01 -> $615E              ; busy
+
+$5807  $6159 += / -= $615A            ; run the counter
+       past $F0 or under $0A ->
+$5834  DEC $6154 / INC $6162 / $615E = 0
+```
+
+So a round is a number of his actions, not of anything geometric, and `$58D1` gives his
+objects fixed positions that never change. Measured over 187 captured frames he is in
+exactly the same place in 181 of them -- the other six are the announcement sign, which
+the isolator picked up instead of him.
 
 His graphics are not in the fighters' shape table, and `$595A` only draws the small
-pointer arrows that accompany him, so he is captured from the screen instead
-(`extract_referee.py`): 9 px by 32 scanlines, agreed by 124 of 185 frames. Frames where
-both fighters are on a standing pose leave his band clear, which is what makes him
-isolate cleanly.
+markers that accompany him -- which are the ippon pips in the HUD, drawn into the second
+P/M area at `$0400-$07FF`. So he is captured from the screen instead
+(`extract_referee.py`): 9 px by 32 scanlines at clock 320, scanline 137, agreed by 124 of
+185 frames. Frames where both fighters are on a standing pose leave his band clear, which
+is what makes him isolate cleanly.
+
+The three actions differ in those markers and in the sign, not in his figure, so one pose
+is all he needs.
 
 ### Correction to an earlier reading
 

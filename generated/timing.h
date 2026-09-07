@@ -21,12 +21,19 @@
 #define T_START_X 0x54
 /* $2F3A, indexed by the round number $615F */
 static const uint8_t ROUND_TRAVERSALS[3]={8,15,20};
-/* $58AD: the referee's step in x per frame */
-static const uint8_t REF_STEP[12]={2,2,2,2,2,2,2,2,2,1,2,3};
-#define REF_X_LEFT  0x0A
-#define REF_X_RIGHT 0xF0
-#define REF_X_START_L 0x28
-#define REF_X_START_R 0xDC
+/* The referee does NOT move. $6159 is how far through one of his signalling
+ * actions he is: $58EF starts one, setting $6159 to $28 or $DC and $615A to a
+ * step from $58AD, and $5807 walks it to $F0 or $0A. Reaching the end is what
+ * decrements the round counter $6154 ($5834), so a round is a number of his
+ * actions, not of anything geometric. $58A1 picks which of three actions, by
+ * round number and a random draw. */
+static const uint8_t REF_ACTION[12]={0,1,2,2,0,1,2,0,0,1,2,2};   /* $58A1 */
+static const uint8_t REF_STEP[12]={2,2,2,2,2,2,2,2,2,1,2,3};     /* $58AD */
+static const uint8_t REF_SIDE[12]={1,1,0,1,0,0,1,0,1,1,0,1};     /* $5885 */
+#define REF_END_LOW   0x0A
+#define REF_END_HIGH  0xF0
+#define REF_START_UP   0x28
+#define REF_START_DOWN 0xDC
 /* $3BF9: the main loop only takes a game tick once the vertical blank has
  * counted more than this many frames into $6121, so the fighters advance at
  * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.

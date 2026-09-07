@@ -81,9 +81,9 @@ pixels are stored as indices (gi / skin / outline) so each fighter gets its own 
 Every pose also carries its absolute top scanline, which is the whole of a sprite's
 vertical placement.
 
-The referee is there too, captured the same way and pacing the arena as `$5807` moves
-him — which is also how the round is counted, since each turn he makes takes one off the
-round counter.
+The referee is there too, captured the same way. He signals from the spot: `$6159` is
+how far through one of his three signalling actions he is, not where he is, and finishing
+one is what takes a tick off the round counter — so a round is a number of his actions.
 
 `check_shape_ids.py` exists because a first attempt at the poses — reading the
 Player/Missile planes instead of the screen — came out **mislabelled**, and that script
