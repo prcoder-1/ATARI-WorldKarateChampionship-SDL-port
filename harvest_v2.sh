@@ -90,14 +90,16 @@ printf 'CONT\n' >&3; sleep 0.2
 # last pose -- so "the occupied band" was ambiguous and the first extraction came out
 # mislabelled (check_shape_ids.py). Driving both fighters to the same shape removes the
 # ambiguity: every occupied band, and both on-screen figures, are the shape under test.
-# $E0/$E1 are the fighters' X positions (valid range $10..$AE); separating them keeps
-# the two figures from overlapping.
+# $E0/$E1 are the fighters' X positions (valid range $10..$AE). They are placed well
+# inside the arena and 72 units apart: at the old $24/$8C the red fighter sat against the
+# right edge of the playfield and its wider poses were clipped by the screen, and the
+# extraction window derived from $5384 cut them again on the left.
 cap() {
   kill -INT $PID; sleep 0.30
   printf 'C DD %s\n' "$1" >&3
   printf 'C DE %s\n' "$1" >&3
-  printf 'C E0 24\n' >&3
-  printf 'C E1 8C\n' >&3
+  printf 'C E0 30\n' >&3
+  printf 'C E1 78\n' >&3
   sleep 0.12
   printf 'CONT\n' >&3; sleep 0.18          # rendered, minimal drift
   # NOSHOT=1 skips the screenshot: the sprite itself comes from the RAM dump, and

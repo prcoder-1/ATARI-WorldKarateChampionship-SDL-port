@@ -45,7 +45,7 @@ INSTR, AUDCBASE, VIBDEP, ARPPOS, ARPON = 0x2156, 0x2159, 0x215C, 0x2160, 0x2163
 def find_dump():
     if len(sys.argv) > 1:
         return sys.argv[1]
-    for pat in ("../extracted/colour3/*.bin", "../extracted/scenes/*.bin"):
+    for pat in ("../extracted/scenes/*.bin", "../extracted/colour4/*.bin"):
         got = sorted(glob.glob(pat))
         if got:
             return got[0]

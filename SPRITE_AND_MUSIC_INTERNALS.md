@@ -25,6 +25,38 @@ architecture), `EXTRACTION.md` (how the disk was opened).
 - Game x maps to screen as **`clock = 2 * x + 28`**, verified against `$E0`/`$E1` in the
   dumps: `$E1 = 140` put the sprite's left edge at clock 308, exactly.
 
+### Two more corrections, from the clipping bug
+
+The first working extraction cut a window out of `$E0` plus the ROM's `$5384` width.
+Both halves of that were wrong:
+
+- **`$5384` is not the drawn width.** It is the width `$5509` uses to build a fighter's
+  box when clamping it to the arena. Poses draw wider than it: the recovered sprites run
+  up to 34 px against a `$5384` of 33, and a high kick's extended leg reaches further
+  left than `$E0`.
+- **The fighters were parked against the edge of the playfield.** At the old capture
+  positions `$24`/`$8C` the right-hand fighter's wider poses were clipped by the screen
+  itself, so the data was truncated before extraction even began.
+
+The fix was to place them at `$30`/`$78`, well inside and 72 units apart, and to isolate
+the figure as the connected blob of gi and skin containing the red pixels -- nothing
+about the width is assumed. Each pose now also carries `x0`, where its ink starts
+relative to the fighter's screen origin: the offset varies per pose, and drawing every
+pose flush left made the figure jitter as the animation ran.
+
+### The referee
+
+A third figure, on the same Player/Missile hardware but in his own scanline band between
+the playfield and the fighters. `$5807` paces him: `$6159` steps by `$615A` (`$58AD`,
+normally 2) and turns at `$F0` and `$0A`, and **each turn decrements `$6154`** -- so he
+is the round counter as well as scenery.
+
+His graphics are not in the fighters' shape table, and `$595A` only draws the small
+pointer arrows that accompany him, so he is captured from the screen instead
+(`extract_referee.py`): 9 px by 32 scanlines, agreed by 124 of 185 frames. Frames where
+both fighters are on a standing pose leave his band clear, which is what makes him
+isolate cleanly.
+
 ### Correction to an earlier reading
 
 An earlier pass here concluded that a fighter was "four adjacent Players, 1 bit per

@@ -33,7 +33,7 @@ from scipy import ndimage
 
 # Several capture runs can be merged: more attempts means more shapes land on a frame
 # where the fighter is fully drawn.
-CAPTURES = sys.argv[1:] or ["../extracted/colour3", "../extracted/colour2"]
+CAPTURES = sys.argv[1:] or ["../extracted/colour4"]
 NSHAPES = 54          # $558D-driven frames reference shape ids up to 51; the
                       # shape tables run to 53 and the ROM zeroes anything >= $36
 CLOCKS_PER_PX = 2
@@ -56,65 +56,16 @@ def eq(im, c):
     return (im[:, :, 0] == c[0]) & (im[:, :, 1] == c[1]) & (im[:, :, 2] == c[2])
 
 
-# Game X maps to screen colour clocks as clock = 2*x + 28, verified against $E0/$E1
-# in the dumps. $E0/$E1 hold each fighter's LEFT EDGE and $5384 its width in sprite
-# pixels, so a fighter's exact horizontal window is known without any guessing.
-X_SCALE, X_ORIGIN = 2, 28
-
-
-def fighter_window(im, left_edge, width):
-    """Isolate the red fighter from its own x window.
-
-    Vertical extent is grown out from the gi-coloured rows: that separates the fighter
-    from the referee standing above it in the same column, and stops at the frame
-    border below. Note $6BC0 is NOT the on-screen height -- it counts rows of the
-    segment-encoded source data -- so only the width is validated against the ROM."""
-    gi, skin, out = eq(im, GI_RED), eq(im, SKIN), eq(im, OUTLINE)
-    x0 = X_SCALE * left_edge + X_ORIGIN
-    cols = [x0 + X_SCALE * k for k in range(width)]
-    if cols[-1] >= im.shape[1]:
-        return None
-
-    def has(mask, y):
-        return any(mask[y, x] for x in cols)
-
-    girows = [y for y in range(GROUND_TOP, FRAME_H) if has(gi, y)]
-    if not girows:
-        return None
-    top, bot = min(girows), max(girows)
-    # Grow only over COLOURED rows (gi or skin). Growing over outline pixels too runs
-    # away: black appears somewhere in the window on nearly every row (referee, frame
-    # border), which swallowed the whole band.
-    coloured = lambda y: has(gi, y) or has(skin, y)
-    while top - 1 >= GROUND_TOP and coloured(top - 1):
-        top -= 1
-    while bot + 1 < FRAME_H and coloured(bot + 1):
-        bot += 1
-    top = max(top - 2, GROUND_TOP)          # a little margin for the outline
-    bot = min(bot + 2, FRAME_H - 1)
-    h = bot - top + 1
-    if h < 8 or h > 60:
-        return None
-    grid = np.zeros((h, width), np.uint8)
-    for y in range(top, bot + 1):
-        for k, x in enumerate(cols):
-            if gi[y, x]:
-                grid[y - top, k] = IDX_GI
-            elif skin[y, x]:
-                grid[y - top, k] = IDX_SKIN
-            elif out[y, x]:
-                grid[y - top, k] = IDX_OUTLINE
-    grid, dtop = trim_outline_edges(grid)
-    return grid, top + dtop
-
-
 def trim_outline_edges(grid):
-    """Drop edge rows/columns that are pure outline.
+    """Drop edge rows and columns that are pure outline.
 
-    The x window is the ROM's shape width, which can reach past the figure onto the
-    frame border or a neighbouring object; those show up as solid black bars."""
+    A solid black line at the sprite's edge is the frame border or a neighbour clipped
+    into view, never part of the figure."""
     def keep(vec):
         return (vec == IDX_GI).any() or (vec == IDX_SKIN).any()
+
+    def solid_outline(vec):
+        return (vec == IDX_OUTLINE).all()
 
     top, bot = 0, grid.shape[0] - 1
     while top < bot and not keep(grid[top]):
@@ -126,12 +77,6 @@ def trim_outline_edges(grid):
         lo += 1
     while hi > lo and not keep(grid[:, hi]):
         hi -= 1
-    # Keep one row/column of outline around the figure, but never a line that is
-    # SOLID outline: that is the frame border or a neighbouring object clipped by the
-    # window, and it renders as a black bar down the sprite's edge.
-    def solid_outline(vec):
-        return (vec == IDX_OUTLINE).all()
-
     if top - 1 >= 0 and not solid_outline(grid[top - 1]):
         top -= 1
     if bot + 1 < grid.shape[0] and not solid_outline(grid[bot + 1]):
@@ -141,13 +86,62 @@ def trim_outline_edges(grid):
     if hi + 1 < grid.shape[1] and not solid_outline(grid[:, hi + 1]):
         hi += 1
     out = grid[top:bot + 1, lo:hi + 1].copy()
-    # and blank any remaining edge column that is pure outline
     while out.shape[1] > 1 and solid_outline(out[:, 0]):
         out = out[:, 1:]
         lo += 1
     while out.shape[1] > 1 and solid_outline(out[:, -1]):
         out = out[:, :-1]
-    return out, top
+    return out, top, lo
+
+
+def fighter_isolate(im):
+    """Isolate the red-gi fighter as a colour-index grid.
+
+    The earlier version cut a window out of $E0 plus the ROM's $5384 width. That was
+    wrong twice over: the sprite reaches left of $E0, and with the fighters poked to the
+    old positions the right-hand one sat against the edge of the playfield, so the screen
+    clipped it as well. Nothing is assumed about the width now -- the figure is the
+    connected blob of gi and skin containing the red pixels, which cannot bridge to the
+    white fighter or the referee across the brown ground between them.
+    """
+    gi, skin, out = eq(im, GI_RED), eq(im, SKIN), eq(im, OUTLINE)
+    band = np.zeros(gi.shape, bool)
+    band[GROUND_TOP:FRAME_H, :] = True
+    gi = gi & band
+    if not gi.any():
+        return None
+    coloured = (gi | skin) & band
+    lab, _ = ndimage.label(coloured, structure=np.ones((3, 3)))
+    ids = set(lab[gi]) - {0}
+    if not ids:
+        return None
+    comp = np.isin(lab, list(ids))
+    ys, xs = np.nonzero(comp)
+    y0, y1 = ys.min(), ys.max()
+    x0, x1 = xs.min(), xs.max()
+    if (y1 - y0) > 60 or (x1 - x0) > 90:        # a leak, not a fighter
+        return None
+    # one pixel of outline all round, where there is any
+    y0 = max(y0 - 1, GROUND_TOP)
+    y1 = min(y1 + 1, FRAME_H - 1)
+    x0 = max(x0 - CLOCKS_PER_PX, 0)
+    x1 = min(x1 + CLOCKS_PER_PX, gi.shape[1] - 1)
+
+    width = (x1 - x0) // CLOCKS_PER_PX + 1
+    grid = np.zeros((y1 - y0 + 1, width), np.uint8)
+    for y in range(y0, y1 + 1):
+        for k in range(width):
+            x = x0 + k * CLOCKS_PER_PX
+            if x > x1:
+                break
+            if gi[y, x]:
+                grid[y - y0, k] = IDX_GI
+            elif skin[y, x]:
+                grid[y - y0, k] = IDX_SKIN
+            elif out[y, x]:
+                grid[y - y0, k] = IDX_OUTLINE
+    grid, dtop, dleft = trim_outline_edges(grid)
+    return grid, y0 + dtop, x0 + dleft * CLOCKS_PER_PX
 
 
 def usable(dump_path):
@@ -158,10 +152,12 @@ def usable(dump_path):
 
 
 def pick(shape, rom_w):
-    """Best attempt for one shape, plus how many independent attempts agreed.
+    """Best attempt for one shape.
 
-    Agreement between attempts is the correctness check here: two captures taken at
-    different moments must yield the same pose for the same shape id."""
+    Attempts disagree when a frame catches the fighter mid-transition or with something
+    else clipped into view, so the winner is the grid the most attempts agree on rather
+    than simply the biggest. Only degenerate captures are dropped: some poses really are a few pixels wide,
+    when the fighter is drawn edge-on mid-turn."""
     cands = []
     shots = []
     for cdir in CAPTURES:
@@ -170,19 +166,25 @@ def pick(shape, rom_w):
         dump = shot[:-4] + ".bin"
         if not os.path.exists(dump) or not usable(dump):
             continue
-        d = open(dump, "rb").read()
-        res = fighter_window(frame(shot), d[0xE1], rom_w)
+        res = fighter_isolate(frame(shot))
         if res is None:
             continue
-        got, ytop = res
-        cands.append((int((got > 0).sum()), got, os.path.basename(shot), ytop))
+        got, ytop, xleft = res
+        d = open(dump, "rb").read()
+        xoff = xleft - (2 * d[0xE1] + 28)      # relative to the sprite's own origin
+        if got.shape[1] < 3 or got.shape[0] < 6:
+            continue                      # a fragment, not a pose
+        cands.append((got, ytop, xoff, os.path.basename(shot)))
     if not cands:
         return None
-    cands.sort(key=lambda c: -c[0])
-    best = cands[0]
-    agree = sum(1 for c in cands[1:]
-                if c[1].shape == best[1].shape and np.array_equal(c[1], best[1]))
-    return best[0], best[1], best[2], agree, len(cands), best[3]
+    groups = {}
+    for got, ytop, xoff, name in cands:
+        key = (got.shape, got.tobytes())
+        groups.setdefault(key, []).append((got, ytop, xoff, name))
+    best = max(groups.values(),
+               key=lambda g: (len(g), int((g[0][0] > 0).sum())))
+    got, ytop, xoff, name = best[0]
+    return int((got > 0).sum()), got, name, len(best) - 1, len(cands), ytop, xoff
 
 
 def main():
@@ -206,11 +208,11 @@ def main():
         if got is None:
             missing.append(s)
             continue
-        score, grid, src, agree, n, ytop = got
+        score, grid, src, agree, n, ytop, xoff = got
         # store facing right; the captured fighter (its $E3 is 1) faces left
-        poses[s] = (grid[:, ::-1].copy(), ytop)
-        print("shape %2d  %2dx%-2d px (ROM w=%2d) top=%3d  %d/%d agree  %s"
-              % (s, grid.shape[1], grid.shape[0], w, ytop, agree + 1, n, src))
+        poses[s] = (grid[:, ::-1].copy(), ytop, xoff)
+        print("shape %2d  %2dx%-2d px (ROM w=%2d) top=%3d xoff=%+d  %d/%d agree  %s"
+              % (s, grid.shape[1], grid.shape[0], w, ytop, xoff, agree + 1, n, src))
     print("\nrecovered %d poses; missing %s" % (len(poses), missing or "none"))
     if poses:
         atlas(poses)
@@ -257,7 +259,10 @@ def emit(poses, path="generated/shapes_pm.h"):
     out.append("/* y0 is the absolute scanline of the sprite's top row. The game gives a\n"
                " * fighter NO vertical motion -- jumps and falls are drawn into the poses\n"
                " * themselves -- so this is the whole of a sprite's vertical placement. */\n")
-    out.append("typedef struct { uint8_t w, h, y0; const uint8_t* px; } ShapePM;\n")
+    out.append("/* x0 is the sprite's left edge as an offset in colour clocks from the\n"
+               " * fighter's own screen origin, 2*x + 28; it varies per pose, and without it\n"
+               " * the figure jitters horizontally as the animation runs. */\n")
+    out.append("typedef struct { uint8_t w, h, y0; int8_t x0; const uint8_t* px; } ShapePM;\n")
     for s in sorted(poses):
         g = poses[s][0]
         flat = ",".join(str(int(v)) for v in g.flatten())
@@ -266,10 +271,11 @@ def emit(poses, path="generated/shapes_pm.h"):
     ents = []
     for s in range(NSHAPES):
         if s in poses:
-            g, ytop = poses[s]
-            ents.append("  {%d,%d,%d, shape%02d_px}" % (g.shape[1], g.shape[0], ytop, s))
+            g, ytop, xoff = poses[s]
+            ents.append("  {%d,%d,%d,%d, shape%02d_px}"
+                        % (g.shape[1], g.shape[0], ytop, xoff, s))
         else:
-            ents.append("  {0,0,0, 0}")
+            ents.append("  {0,0,0,0, 0}")
     out.append("static const ShapePM SHAPE_PM[SHAPE_COUNT]={\n%s\n};\n" % ",\n".join(ents))
     out.append("#endif\n")
     open(path, "w").write("".join(out))

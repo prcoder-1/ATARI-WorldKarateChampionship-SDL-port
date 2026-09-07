@@ -81,9 +81,15 @@ pixels are stored as indices (gi / skin / outline) so each fighter gets its own 
 Every pose also carries its absolute top scanline, which is the whole of a sprite's
 vertical placement.
 
-`check_shape_ids.py` exists because a first attempt at this — reading the Player/Missile
-planes instead of the screen — came out **mislabelled**, and that script is what caught
-it. See `SPRITE_AND_MUSIC_INTERNALS.md`.
+The referee is there too, captured the same way and pacing the arena as `$5807` moves
+him — which is also how the round is counted, since each turn he makes takes one off the
+round counter.
+
+`check_shape_ids.py` exists because a first attempt at the poses — reading the
+Player/Missile planes instead of the screen — came out **mislabelled**, and that script
+is what caught it. A later attempt clipped every pose by deriving its width from `$5384`,
+which turns out to be the arena-clamp width rather than the drawn one. See
+`SPRITE_AND_MUSIC_INTERNALS.md`.
 
 ## Files
 
@@ -110,6 +116,7 @@ it. See `SPRITE_AND_MUSIC_INTERNALS.md`.
 - `atari_gfx.h` — the mode E playfield renderer
 - `hud.h` / `generated/hud.h` — the HUD: the game's own character set, its per-scanline
   colours and its layout, all recovered from the original
+- `extract_referee.py` / `generated/referee.h` — the referee
 - `extract_hud.py` — regenerates them, and refuses to emit unless re-rendering the two
   mode 4 rows reproduces the capture exactly (`make verify-hud`)
 - `verify_scenes.c` / `verify_scenes.py` — `make verify-scenes`: proves the port reproduces

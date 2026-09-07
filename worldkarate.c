@@ -33,6 +33,7 @@
 #include "pokey.h"                /* the game's music player ($1F06) and POKEY tones  */
 #include "sfx.h"                  /* the game's digitised sound effects ($3A7C/$3AE0) */
 #include "hud.h"                  /* the game's HUD: its font, colours and layout      */
+#include "generated/referee.h"    /* the referee, captured from the screen             */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame ------- */
@@ -125,21 +126,56 @@ static void drawBackground(void){ sceneDraw(&BG_SCENES[bg%NSCENES], LW, LH, setp
 static const Col COL_SKIN    = {230,180,150};
 static const Col COL_OUTLINE = {0,0,0};
 
+/* The sprite field is $24 = 36 game units wide ($5509 builds the fighter's box as
+ * [x, x+W] facing right and [x+36-W, x+36] facing left), so a pose is left-aligned in
+ * that field one way round and right-aligned the other. ShapePM.x0 is where the pose's
+ * ink starts, in colour clocks from the fighter's origin, as captured facing left. */
+#define FGT_FIELD (36*FX_SCALE)
+
+static int spriteLeft(const ShapePM* s, const Fighter* f)
+{
+    int ink = s->x0;
+    if(!f->facing) ink = FGT_FIELD - s->x0 - s->w*FX_SCALE;   /* mirror in the field */
+    return FGT_X(f->x) + ink;
+}
+
 static void drawFighter(const Fighter* f, Col gi)
 {
     const ShapePM* s=&SHAPE_PM[f->shape % SHAPE_COUNT];
     if(!s->h || !s->px) return;
-    int x0=FGT_X(f->x);
+    int left=spriteLeft(s,f);
     for(int y=0;y<s->h;y++){
         for(int k=0;k<s->w;k++){
             uint8_t v=s->px[y*s->w+k];
             if(!v) continue;
-            int col = f->facing ? (s->w-1-k) : k;   /* mirror when facing left */
+            int col = f->facing ? (s->w-1-k) : k;   /* stored facing right */
             Col c = (v==SHAPE_IDX_GI)?gi : (v==SHAPE_IDX_SKIN)?COL_SKIN : COL_OUTLINE;
             setcol(c);
-            fillrect(x0+col*FX_SCALE, s->y0+y, FX_SCALE, 1);
+            fillrect(left+col*FX_SCALE, s->y0+y, FX_SCALE, 1);
         }
     }
+}
+
+/* ---------------- the referee ----------------
+ * He paces the arena and each turn takes one off the round counter, exactly as $5807
+ * has it. His x lives in $6159 and turns at $0A and $F0; how those map to HPOS is not
+ * pinned down, so the range is calibrated onto the visible playfield here -- which is
+ * what he visibly does. His band and his sprite are captured (extract_referee.py). */
+static void drawReferee(void)
+{
+    if(gstate!=G_FIGHT && gstate!=G_POINT) return;
+    int span = SCENE_RIGHT - SCENE_LEFT - REF_W*REF_CLOCKS_PER_PX;
+    int left = SCENE_LEFT + (refX - REF_X_LEFT) * span / (REF_X_RIGHT - REF_X_LEFT);
+    for(int y=0;y<REF_H;y++)
+        for(int k=0;k<REF_W;k++){
+            uint8_t v=REF_PX[y*REF_W+k];
+            if(!v) continue;
+            int col = refDir ? (REF_W-1-k) : k;    /* he faces the way he walks */
+            Col c = (v==SHAPE_IDX_GI)?rgb(235,235,235)
+                  : (v==SHAPE_IDX_SKIN)?COL_SKIN : COL_OUTLINE;
+            setcol(c);
+            fillrect(left+col*REF_CLOCKS_PER_PX, REF_Y+y, REF_CLOCKS_PER_PX, 1);
+        }
 }
 
 /* Sprite overlap, which is what the hardware's player-player collision reports.
@@ -149,7 +185,7 @@ static int spritesOverlap(const Fighter* a, const Fighter* b)
     const ShapePM* sa=&SHAPE_PM[a->shape % SHAPE_COUNT];
     const ShapePM* sb=&SHAPE_PM[b->shape % SHAPE_COUNT];
     if(!sa->h||!sb->h||!sa->px||!sb->px) return 0;
-    int ax=FGT_X(a->x), bx=FGT_X(b->x);
+    int ax=spriteLeft(sa,a), bx=spriteLeft(sb,b);
     for(int y=0;y<sa->h;y++){
         int sy=sa->y0+y-sb->y0;
         if(sy<0||sy>=sb->h) continue;
@@ -480,6 +516,7 @@ int main(int argc,char**argv)
 
         drawBackground();
         if(gstate!=G_TITLE){
+            drawReferee();
             if(p1.x<=p2.x){ drawFighter(&p1,rgb(235,235,235)); drawFighter(&p2,rgb(150,60,70)); }
             else          { drawFighter(&p2,rgb(150,60,70));   drawFighter(&p1,rgb(235,235,235)); }
             drawHUD();
