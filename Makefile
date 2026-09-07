@@ -1,0 +1,45 @@
+CC      ?= cc
+CFLAGS  ?= -O2 -Wall -Wextra -std=c11
+PKG     := $(shell pkg-config --cflags --libs sdl2)
+LDLIBS  += -lm
+
+worldkarate: worldkarate.c fighter.h ai.h pokey.h sfx.h hud.h atari_gfx.h game_data.h \
+             generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h generated/hud.h
+	$(CC) $(CFLAGS) $< -o $@ $(PKG) $(LDLIBS)
+
+run: worldkarate
+	./worldkarate
+
+# Check that the port's renderer reproduces the original's backgrounds exactly.
+verify-scenes: verify_scenes.c atari_gfx.h generated/scenes.h
+	$(CC) $(CFLAGS) -I. verify_scenes.c -o /tmp/verify_scenes $(LDLIBS)
+	/tmp/verify_scenes
+	python3 verify_scenes.py
+
+# Exercise the ported fighter state machine headlessly.
+verify-fighter: verify_fighter.c fighter.h game_data.h
+	$(CC) $(CFLAGS) -I. verify_fighter.c -o /tmp/verify_fighter $(LDLIBS)
+	/tmp/verify_fighter
+
+# Run the music player headlessly and render it to a WAV.
+verify-music: verify_music.c pokey.h generated/music.h
+	$(CC) $(CFLAGS) -I. verify_music.c -o /tmp/verify_music $(LDLIBS)
+	/tmp/verify_music
+	python3 verify_music.py
+
+# Establish that the game really has no sound effects (a scan, not an assertion).
+verify-sfx: verify_sfx.c sfx.h generated/sfx.h
+	$(CC) $(CFLAGS) -I. verify_sfx.c -o /tmp/verify_sfx $(LDLIBS)
+	/tmp/verify_sfx
+
+# The HUD extractor is its own check: it refuses to emit unless re-rendering the two
+# mode 4 rows reproduces the capture exactly.
+verify-hud:
+	python3 extract_hud.py
+
+verify: verify-scenes verify-fighter verify-music verify-sfx verify-hud
+
+clean:
+	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx
+
+.PHONY: run clean verify verify-scenes verify-fighter verify-music verify-sfx verify-hud
