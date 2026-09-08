@@ -36,10 +36,15 @@
 #include "generated/referee.h"    /* the referee, captured from the screen             */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
-/* ------- the logical screen is the Atari frame ------- */
+/* ------- the logical screen is the Atari frame -------
+ * 384 colour clocks by 240 scanlines. SCALE is how many window pixels one of those
+ * units becomes, and it is the only place the output size is decided: everything below
+ * draws in Atari units and fillrect() multiplies. Each unit is emitted as a solid
+ * SDL_RenderFillRect on integer boundaries, so there is no filtering or resampling at
+ * any scale -- one unit is a hard-edged SCALE x SCALE block. */
 #define LW 384
 #define LH 240
-#define SCALE 2
+#define SCALE 4
 #define WINW (LW*SCALE)
 #define WINH (LH*SCALE)
 #define FPS 60
