@@ -134,19 +134,27 @@ static void drawBackground(void){ sceneDraw(&BG_SCENES[bg%NSCENES], LW, LH, setp
 /* ---------------- fighters ----------------
  * A pose is drawn at its own absolute top scanline (no vertical motion exists) and at
  * two colour clocks per sprite pixel, mirrored when the fighter faces left. */
-static const Col COL_SKIN    = {230,180,150};
-static const Col COL_OUTLINE = {0,0,0};
+/* The colours come from the captures via generated/shapes_pm.h, not from taste: the
+ * port had been painting the skin tan (230,180,150) where the game puts a pink
+ * (189,113,121), the white gi brighter than it is, and the outline pure black. */
+static const Col COL_SKIN    = {SHAPE_COL_SKIN};
+static const Col COL_OUTLINE = {SHAPE_COL_OUTLINE};
+static const Col COL_GI_P1   = {SHAPE_COL_GI_WHITE};
+static const Col COL_GI_P2   = {SHAPE_COL_GI_RED};
 
-/* The sprite field is $24 = 36 game units wide ($5509 builds the fighter's box as
- * [x, x+W] facing right and [x+36-W, x+36] facing left), so a pose is left-aligned in
- * that field one way round and right-aligned the other. ShapePM.x0 is where the pose's
- * ink starts, in colour clocks from the fighter's origin, as captured facing left. */
-#define FGT_FIELD (36*FX_SCALE)
-
+/* ShapePM.x0 is where the pose's ink starts, in colour clocks from the fighter's
+ * origin, as captured from the fighter that faces LEFT. Facing right the pose is
+ * mirrored within the same Player/Missile field -- four adjacent double-width Players,
+ * 64 colour clocks -- so its ink starts at SHAPE_MIRROR_CLOCKS - x0 - 2*w instead.
+ *
+ * That constant is measured by extract_sprites.py from the left-hand fighter, which
+ * faces right, and 83 of 84 captures agree on it. It used to be derived instead, from
+ * $5509's clamp box being $24 = 36 game units wide, which put it 56 clocks out and drew
+ * every right-facing fighter 28 sprite pixels too far right. */
 static int spriteLeft(const ShapePM* s, const Fighter* f)
 {
     int ink = s->x0;
-    if(!f->facing) ink = FGT_FIELD - s->x0 - s->w*FX_SCALE;   /* mirror in the field */
+    if(!f->facing) ink = SHAPE_MIRROR_CLOCKS - s->x0 - s->w*FX_SCALE;
     return FGT_X(f->x) + ink;
 }
 
@@ -180,7 +188,7 @@ static void drawReferee(void)
         for(int k=0;k<REF_W;k++){
             uint8_t v=REF_PX[y*REF_W+k];
             if(!v) continue;
-            Col c = (v==SHAPE_IDX_GI)?rgb(235,235,235)
+            Col c = (v==SHAPE_IDX_GI)?COL_GI_P1
                   : (v==SHAPE_IDX_SKIN)?COL_SKIN : COL_OUTLINE;
             setcol(c);
             fillrect(REF_X+k*REF_CLOCKS_PER_PX, REF_Y+y, REF_CLOCKS_PER_PX, 1);
@@ -556,8 +564,8 @@ int main(int argc,char**argv)
              * ATTR_TURN frame last handed the turn to: $611C takes that fighter's
              * colour from $EA and $611D the other's. Ordering by x instead made the
              * two pop past each other the moment they crossed. */
-            if(fgtTurnOwner){ drawFighter(&p1,rgb(235,235,235)); drawFighter(&p2,rgb(150,60,70)); }
-            else            { drawFighter(&p2,rgb(150,60,70));   drawFighter(&p1,rgb(235,235,235)); }
+            if(fgtTurnOwner){ drawFighter(&p1,COL_GI_P1); drawFighter(&p2,COL_GI_P2); }
+            else            { drawFighter(&p2,COL_GI_P2); drawFighter(&p1,COL_GI_P1); }
             drawHUD();
         }
         if(gstate==G_TITLE){

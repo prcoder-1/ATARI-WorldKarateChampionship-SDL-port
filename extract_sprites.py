@@ -41,8 +41,10 @@ GROUND_TOP = 128          # first scanline below the mode-E playfield
 FRAME_H = 240
 
 GI_RED = (132, 55, 63)
+GI_WHITE = (211, 211, 211)
 SKIN = (189, 113, 121)
 OUTLINE = (4, 4, 4)
+FX_ORIGIN = 28            # a fighter's screen origin in colour clocks is 2*x + 28
 
 IDX_GI, IDX_SKIN, IDX_OUTLINE = 1, 2, 3
 
@@ -56,135 +58,187 @@ def eq(im, c):
     return (im[:, :, 0] == c[0]) & (im[:, :, 1] == c[1]) & (im[:, :, 2] == c[2])
 
 
-def trim_outline_edges(grid):
-    """Drop edge rows and columns that are pure outline.
-
-    A solid black line at the sprite's edge is the frame border or a neighbour clipped
-    into view, never part of the figure."""
-    def keep(vec):
-        return (vec == IDX_GI).any() or (vec == IDX_SKIN).any()
-
-    def solid_outline(vec):
-        return (vec == IDX_OUTLINE).all()
-
-    top, bot = 0, grid.shape[0] - 1
-    while top < bot and not keep(grid[top]):
-        top += 1
-    while bot > top and not keep(grid[bot]):
-        bot -= 1
-    lo, hi = 0, grid.shape[1] - 1
-    while lo < hi and not keep(grid[:, lo]):
-        lo += 1
-    while hi > lo and not keep(grid[:, hi]):
-        hi -= 1
-    if top - 1 >= 0 and not solid_outline(grid[top - 1]):
-        top -= 1
-    if bot + 1 < grid.shape[0] and not solid_outline(grid[bot + 1]):
-        bot += 1
-    if lo - 1 >= 0 and not solid_outline(grid[:, lo - 1]):
-        lo -= 1
-    if hi + 1 < grid.shape[1] and not solid_outline(grid[:, hi + 1]):
-        hi += 1
-    out = grid[top:bot + 1, lo:hi + 1].copy()
-    while out.shape[1] > 1 and solid_outline(out[:, 0]):
-        out = out[:, 1:]
-        lo += 1
-    while out.shape[1] > 1 and solid_outline(out[:, -1]):
-        out = out[:, :-1]
-    return out, top, lo
-
-
 def fighter_isolate(im):
     """Isolate the red-gi fighter as a colour-index grid.
 
-    The earlier version cut a window out of $E0 plus the ROM's $5384 width. That was
-    wrong twice over: the sprite reaches left of $E0, and with the fighters poked to the
-    old positions the right-hand one sat against the edge of the playfield, so the screen
-    clipped it as well. Nothing is assumed about the width now -- the figure is the
-    connected blob of gi and skin containing the red pixels, which cannot bridge to the
-    white fighter or the referee across the brown ground between them.
+    The figure is the connected blob of gi and skin containing the red pixels -- which
+    cannot bridge to the white fighter or the referee across the brown ground between
+    them -- **grown outwards through the black**, so that everything the figure is drawn
+    from comes along: the outline ring, the belt, and the hair.
+
+    The hair is the reason this matters. It is pure black, so it is neither gi nor skin,
+    and an earlier version took the gi+skin bounding box and added a single row of
+    margin. A head carries three scanlines of hair above the first pixel of face, so two
+    of them were cut off and every fighter came out flat-topped. Growing through the
+    black instead recovers them and stops on its own: the propagation is masked to
+    gi|skin|outline, and nothing black connects the figure to anything else.
     """
     gi, skin, out = eq(im, GI_RED), eq(im, SKIN), eq(im, OUTLINE)
     band = np.zeros(gi.shape, bool)
     band[GROUND_TOP:FRAME_H, :] = True
-    gi = gi & band
+    gi, skin, out = gi & band, skin & band, out & band
     if not gi.any():
         return None
-    coloured = (gi | skin) & band
-    lab, _ = ndimage.label(coloured, structure=np.ones((3, 3)))
+    lab, _ = ndimage.label(gi | skin, structure=np.ones((3, 3)))
     ids = set(lab[gi]) - {0}
     if not ids:
         return None
-    comp = np.isin(lab, list(ids))
-    ys, xs = np.nonzero(comp)
+    seed = np.isin(lab, list(ids))
+    figure = ndimage.binary_propagation(seed, structure=np.ones((3, 3)),
+                                        mask=gi | skin | out)
+    ys, xs = np.nonzero(figure)
     y0, y1 = ys.min(), ys.max()
     x0, x1 = xs.min(), xs.max()
     if (y1 - y0) > 60 or (x1 - x0) > 90:        # a leak, not a fighter
         return None
-    # one pixel of outline all round, where there is any
-    y0 = max(y0 - 1, GROUND_TOP)
-    y1 = min(y1 + 1, FRAME_H - 1)
-    x0 = max(x0 - CLOCKS_PER_PX, 0)
-    x1 = min(x1 + CLOCKS_PER_PX, gi.shape[1] - 1)
 
     width = (x1 - x0) // CLOCKS_PER_PX + 1
     grid = np.zeros((y1 - y0 + 1, width), np.uint8)
     for y in range(y0, y1 + 1):
         for k in range(width):
             x = x0 + k * CLOCKS_PER_PX
-            if x > x1:
-                break
+            if x > x1 or not figure[y, x]:
+                continue                    # black that is not part of the figure
             if gi[y, x]:
                 grid[y - y0, k] = IDX_GI
             elif skin[y, x]:
                 grid[y - y0, k] = IDX_SKIN
-            elif out[y, x]:
+            else:
                 grid[y - y0, k] = IDX_OUTLINE
-    grid, dtop, dleft = trim_outline_edges(grid)
-    return grid, y0 + dtop, x0 + dleft * CLOCKS_PER_PX
+    return grid, y0, x0
 
 
-def usable(dump_path):
-    """Screen extraction does not care about the P/M double-buffer parity -- the
-    screenshot shows whatever GTIA composited. Only $E1 is needed from the dump."""
-    d = open(dump_path, "rb").read()
-    return len(d) > 0x6120
+def parity_ok(dump):
+    """Whether the P/M double buffer was on its valid side when the dump was taken.
+
+    $6119 alternates $08 (the fighter's four Players filled) and $18. Not every $18
+    frame is spoiled and the dump is written a moment after the screenshot, so this is
+    a preference rather than a filter -- see collect().
+    """
+    return len(dump) > 0x6120 and dump[0x6119] == 0x08
 
 
-def pick(shape, rom_w):
-    """Best attempt for one shape.
-
-    Attempts disagree when a frame catches the fighter mid-transition or with something
-    else clipped into view, so the winner is the grid the most attempts agree on rather
-    than simply the biggest. Only degenerate captures are dropped: some poses really are a few pixels wide,
-    when the fighter is drawn edge-on mid-turn."""
+def collect(shape):
+    """Every candidate pose for one shape id, as (grid, ytop, xoff, parity, name)."""
     cands = []
     shots = []
     for cdir in CAPTURES:
         shots += sorted(glob.glob(os.path.join(cdir, "s_%02X_*.png" % shape)))
     for shot in shots:
-        dump = shot[:-4] + ".bin"
-        if not os.path.exists(dump) or not usable(dump):
+        dumppath = shot[:-4] + ".bin"
+        if not os.path.exists(dumppath):
+            continue
+        d = open(dumppath, "rb").read()
+        if len(d) <= 0x6120:
             continue
         res = fighter_isolate(frame(shot))
         if res is None:
             continue
         got, ytop, xleft = res
-        d = open(dump, "rb").read()
-        xoff = xleft - (2 * d[0xE1] + 28)      # relative to the sprite's own origin
         if got.shape[1] < 3 or got.shape[0] < 6:
             continue                      # a fragment, not a pose
-        cands.append((got, ytop, xoff, os.path.basename(shot)))
+        xoff = xleft - (2 * d[0xE1] + 28)      # relative to the sprite's own origin
+        cands.append((got, ytop, xoff, parity_ok(d), os.path.basename(shot)))
+    return cands
+
+
+# One Player is 8 sprite pixels wide; with its outline a single Player's worth of
+# image measures about 10. A fighter is four adjacent Players, so anything this narrow
+# is at most one quarter of a figure.
+ONE_PLAYER_PX = 12
+
+
+def artifacts(all_cands, min_shapes=3):
+    """Bitmaps that cannot be poses: a partially composed frame.
+
+    On a spoiled frame the fighter's four Players are not all filled and what is left on
+    screen is one Player's worth -- a 9 px sliver, 53 scanlines tall. Two things give it
+    away together. It is no wider than a single Player, so it cannot be a whole figure;
+    and it is the same image whatever shape was poked, so it turns up under many
+    different shape ids -- ten of them had adopted this one bitmap as their pose.
+
+    Both conditions are needed. Recurrence alone is not enough: the neutral standing
+    pose is genuinely shared by several move frames, and rejecting it threw away shape 0.
+    """
+    seen = {}
+    for shape, cands in all_cands.items():
+        for got, _y, _x, _p, _n in cands:
+            seen.setdefault((got.shape, got.tobytes()), set()).add(shape)
+    return {k for k, ids in seen.items()
+            if len(ids) >= min_shapes and k[0][1] <= ONE_PLAYER_PX}
+
+
+def pick(shape, cands, bad):
+    """Best attempt for one shape: the pose the most captures agree on.
+
+    Attempts disagree when a frame catches the fighter mid-transition or with something
+    else clipped into view, so the winner is the grid the most attempts agree on rather
+    than simply the biggest, with a valid-parity capture preferred to break ties.
+    """
+    cands = [c for c in cands if (c[0].shape, c[0].tobytes()) not in bad]
     if not cands:
         return None
     groups = {}
-    for got, ytop, xoff, name in cands:
-        key = (got.shape, got.tobytes())
-        groups.setdefault(key, []).append((got, ytop, xoff, name))
+    for got, ytop, xoff, parity, name in cands:
+        groups.setdefault((got.shape, got.tobytes()), []).append(
+            (got, ytop, xoff, parity, name))
     best = max(groups.values(),
-               key=lambda g: (len(g), int((g[0][0] > 0).sum())))
-    got, ytop, xoff, name = best[0]
-    return int((got > 0).sum()), got, name, len(best) - 1, len(cands), ytop, xoff
+               key=lambda g: (len(g), sum(1 for c in g if c[3]),
+                              int((g[0][0] > 0).sum())))
+    got, ytop, xoff, parity, name = best[0]
+    return got, name, len(best), len(cands), ytop, xoff
+
+
+def measure_mirror(poses):
+    """Where a pose's ink lands when the fighter faces RIGHT, measured.
+
+    x0 is captured from the right-hand fighter, which faces left. The left-hand fighter
+    in the same captures faces right and wears the white gi, so it gives the other half
+    of the geometry directly instead of by assumption.
+
+    The two are mirror images within the same Player/Missile field -- four adjacent
+    double-width Players, 64 colour clocks -- so the offset facing right is
+    `K - x0 - 2*width`, and K is what this measures. It came out as a firm constant, and
+    an assumed value 56 clocks (28 sprite pixels) off had been drawing the right-facing
+    fighter well to the right of where the game puts it.
+    """
+    votes = {}
+    for cdir in CAPTURES:
+        for shot in sorted(glob.glob(os.path.join(cdir, "s_*.png"))):
+            m = re.search(r"s_([0-9A-F]{2})_", os.path.basename(shot))
+            dumppath = shot[:-4] + ".bin"
+            if not m or not os.path.exists(dumppath):
+                continue
+            sid = int(m.group(1), 16)
+            if sid not in poses:
+                continue
+            d = open(dumppath, "rb").read()
+            if len(d) <= 0x6120 or d[0x6119] != 0x08 or d[0xDD] != sid or d[0xE2] != 0:
+                continue
+            im = frame(shot)
+            wh, sk, ol = eq(im, GI_WHITE), eq(im, SKIN), eq(im, OUTLINE)
+            band = np.zeros(wh.shape, bool)
+            # left of the right-hand fighter, below the playfield: the referee wears the
+            # same white gi but stands to the right of both
+            band[GROUND_TOP:FRAME_H, :2 * d[0xE1] + FX_ORIGIN - 8] = True
+            wh, sk, ol = wh & band, sk & band, ol & band
+            if not wh.any():
+                continue
+            lab, _ = ndimage.label(wh | sk, structure=np.ones((3, 3)))
+            ids = set(lab[wh]) - {0}
+            if not ids:
+                continue
+            fig = ndimage.binary_propagation(np.isin(lab, list(ids)),
+                                             structure=np.ones((3, 3)), mask=wh | sk | ol)
+            ys, xs = np.nonzero(fig)
+            grid, y0, x0 = poses[sid]
+            if ys.min() != y0:
+                continue                  # not showing the poked pose
+            k = xs.min() - (2 * d[0xE0] + FX_ORIGIN) + x0 + grid.shape[1] * CLOCKS_PER_PX
+            votes[k] = votes.get(k, 0) + 1
+    if not votes:
+        return None, votes
+    return max(votes, key=votes.get), votes
 
 
 def main():
@@ -198,25 +252,36 @@ def main():
             heights = list(d[0x6BC0:0x6BC0 + NSHAPES])
             widths = list(d[0x5384:0x5384 + NSHAPES])
             break
+
+    ids = [s for s in range(NSHAPES) if not (heights and heights[s] == 0)]
+    all_cands = {s: collect(s) for s in ids}
+    bad = artifacts(all_cands)
+    print("%d bitmap(s) rejected as spoiled-frame artifacts:" % len(bad))
+    for shp, _blob in bad:
+        print("   %dx%d, seen under several different shape ids" % (shp[1], shp[0]))
+    print()
+
     poses, missing = {}, []
-    for s in range(NSHAPES):
-        if heights and heights[s] == 0:
-            continue                      # only shape 4: genuinely unused
-        # $5384 is 0 for a few shapes; fall back to the full four-Player field.
-        w = widths[s] or 32
-        got = pick(s, w)
+    for s in ids:
+        got = pick(s, all_cands[s], bad)
         if got is None:
             missing.append(s)
             continue
-        score, grid, src, agree, n, ytop, xoff = got
+        grid, src, agree, n, ytop, xoff = got
         # store facing right; the captured fighter (its $E3 is 1) faces left
         poses[s] = (grid[:, ::-1].copy(), ytop, xoff)
         print("shape %2d  %2dx%-2d px (ROM w=%2d) top=%3d xoff=%+d  %d/%d agree  %s"
-              % (s, grid.shape[1], grid.shape[0], w, ytop, xoff, agree + 1, n, src))
+              % (s, grid.shape[1], grid.shape[0], widths[s] if widths else 0,
+                 ytop, xoff, agree, n, src))
     print("\nrecovered %d poses; missing %s" % (len(poses), missing or "none"))
+    mirror, votes = measure_mirror(poses)
+    print("mirror constant K (ink offset facing right = K - x0 - 2*width): %s"
+          % ("%d clocks, %d of %d captures agree"
+             % (mirror, votes[mirror], sum(votes.values())) if mirror is not None
+             else "not measurable from these captures"))
     if poses:
         atlas(poses)
-        emit(poses)
+        emit(poses, mirror=mirror)
     return poses
 
 
@@ -239,7 +304,7 @@ def atlas(poses, path="screenshots/shape_atlas_colour.png", scale=3):
     print("wrote", path)
 
 
-def emit(poses, path="generated/shapes_pm.h"):
+def emit(poses, path="generated/shapes_pm.h", mirror=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     out = []
     out.append("/* shapes_pm.h - the game's own fighter poses, in colour.\n"
@@ -262,6 +327,17 @@ def emit(poses, path="generated/shapes_pm.h"):
     out.append("/* x0 is the sprite's left edge as an offset in colour clocks from the\n"
                " * fighter's own screen origin, 2*x + 28; it varies per pose, and without it\n"
                " * the figure jitters horizontally as the animation runs. */\n")
+    out.append("/* The colours the game actually puts on screen, read off the captures\n"
+               " * rather than chosen: the two gi, the skin and the outline. */\n")
+    for name, c in (("GI_WHITE", GI_WHITE), ("GI_RED", GI_RED),
+                    ("SKIN", SKIN), ("OUTLINE", OUTLINE)):
+        out.append("#define SHAPE_COL_%s %d,%d,%d\n" % (name, c[0], c[1], c[2]))
+    if mirror is not None:
+        out.append("/* x0 is captured from the fighter that faces LEFT. Facing right the\n"
+                   " * pose is mirrored within the same four-Player field, so its ink\n"
+                   " * starts at SHAPE_MIRROR_CLOCKS - x0 - 2*w from the origin. Measured\n"
+                   " * from the left-hand fighter, which faces right. */\n")
+        out.append("#define SHAPE_MIRROR_CLOCKS %d\n" % mirror)
     out.append("typedef struct { uint8_t w, h, y0; int8_t x0; const uint8_t* px; } ShapePM;\n")
     for s in sorted(poses):
         g = poses[s][0]

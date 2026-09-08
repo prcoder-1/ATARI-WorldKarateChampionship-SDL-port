@@ -19,6 +19,10 @@ DISP="${DISP:-:95}"
 DIR="/home/prcoder/claude-experiments/WorldKarate"
 OUT="${1:-$DIR/extracted/harvest2}"
 mkdir -p "$OUT"
+# Must be absolute: the emulator's monitor resolves WRITE paths from ITS OWN working
+# directory, not the caller's, so a relative OUT silently drops every dump and every
+# screenshot into a directory nobody looks at.
+OUT="$(cd "$OUT" && pwd)"
 # KEEP=1 appends to an existing harvest (used to top up shapes that never landed
 # on the usable double-buffer parity); default wipes.
 [ "${KEEP:-0}" = "1" ] || rm -f "$OUT"/*.png "$OUT"/*.bin

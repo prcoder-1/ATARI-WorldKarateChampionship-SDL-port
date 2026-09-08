@@ -36,14 +36,19 @@ verify-sfx: verify_sfx.c sfx.h generated/sfx.h
 	$(CC) $(CFLAGS) -I. verify_sfx.c -o /tmp/verify_sfx $(LDLIBS)
 	/tmp/verify_sfx
 
+# Re-render every extracted pose the way the port draws it and compare with the
+# original screenshots, both facings, pixel for pixel.
+verify-sprites:
+	python3 verify_sprites.py
+
 # The HUD extractor is its own check: it refuses to emit unless re-rendering the two
 # mode 4 rows reproduces the capture exactly.
 verify-hud:
 	python3 extract_hud.py
 
-verify: verify-scenes verify-fighter verify-music verify-sfx verify-hud
+verify: verify-scenes verify-sprites verify-fighter verify-music verify-sfx verify-hud
 
 clean:
 	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx
 
-.PHONY: run clean verify verify-scenes verify-fighter verify-music verify-sfx verify-hud
+.PHONY: run clean verify verify-scenes verify-sprites verify-fighter verify-music verify-sfx verify-hud

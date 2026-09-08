@@ -44,6 +44,19 @@ about the width is assumed. Each pose now also carries `x0`, where its ink start
 relative to the fighter's screen origin: the offset varies per pose, and drawing every
 pose flush left made the figure jitter as the animation ran.
 
+### A third correction: the hair
+
+That blob is gi and skin, and it has to be **grown outwards through the black** before
+the bounding box is taken. Hair is pure black, so it is neither gi nor skin, and taking
+the gi+skin box with a single row of margin cut the top off every head: a head carries
+three scanlines of hair above the first pixel of face, so two of them were lost and the
+fighters came out flat-topped.
+
+Growing stops on its own -- the propagation is masked to gi, skin and outline, and
+nothing black connects a figure to anything else on the ground -- and it also means only
+pixels that belong to the figure are emitted, rather than every black pixel that happens
+to fall inside the box.
+
 ### The referee -- he stands still
 
 A third figure, on the same Player/Missile hardware but in his own scanline band between
@@ -97,12 +110,48 @@ the composited screen rather than the planes, which also recovers the colours. W
 then agree exactly with the ROM's own `$5384` table for every shape, which is the check
 that the labelling is now right.
 
+### Where a pose lands, and in what colours
+
+A pose is captured from the right-hand fighter, which faces left, so `ShapePM.x0` is the
+offset of its ink from that fighter's origin (`2*x + 28` colour clocks) in that facing.
+Facing right the game mirrors the pose within the same Player/Missile field -- four
+adjacent double-width Players, 64 colour clocks -- so the ink starts at
+`SHAPE_MIRROR_CLOCKS - x0 - 2*width` instead.
+
+That constant is **measured**, by `extract_sprites.py`, from the left-hand fighter in the
+same captures: it faces right and wears the white gi, so it gives the other half of the
+geometry directly. It comes out at 16 colour clocks, agreed by 101 of 102 captures.
+
+It had been derived rather than measured, from `$5509`'s clamp box being `$24` = 36 game
+units wide, which gave 72 -- 56 clocks out, so every right-facing fighter was drawn 28
+sprite pixels to the right of where the game puts it. The two fighters interpenetrated
+at what should have been sparring distance.
+
+The colours are read off the captures too, and generated into the header rather than
+chosen: white gi `211,211,211`, red gi `132,55,63`, skin `189,113,121`, outline
+`4,4,4`. The port had been painting the skin tan (`230,180,150`).
+
+`verify_sprites.py` re-renders every pose the way `worldkarate.c` draws it, both
+facings, and compares with the original screenshots pixel for pixel.
+
 ## 1.2 The P/M area is double-buffered
 
 `$6119` alternates between `$08` (players live at `$0C00-$0FFF`) and `$18` (that buffer
 holds stale content), and `$6120` is the base actually programmed into `PMBASE`, forced
-to `$00` on menu and scenery screens. This matters when reading P/M memory. It does
-*not* matter for screen extraction, which sees whatever GTIA composited.
+to `$00` on menu and scenery screens. This matters when reading P/M memory.
+
+**It matters for screen extraction too**, contrary to what this section used to say. The
+argument that a screenshot shows whatever GTIA composited and so the parity cannot
+reach it is wrong: on a `$18` frame the fighter's four Players are not all filled, and
+what reaches the screen is one Player's worth of image -- a 9 px sliver, 53 scanlines
+tall. Across the capture set that sliver appears in 25 of the `$18` frames and 3 of the
+`$08` ones, and **ten shape ids had adopted it as their pose**, all ten landing on the
+identical bitmap. `extract_sprites.py` now prefers `$08` captures and rejects any bitmap
+that is both no wider than a single Player and shared by three or more shape ids.
+
+Both conditions are needed. Recurrence on its own is not evidence: the neutral standing
+pose is genuinely shared by several shape ids, and a first attempt at this rule threw
+shape 0 away.
 
 ## 1.3 Shape metadata and data
 
@@ -111,7 +160,7 @@ to `$00` on menu and scenery screens. This matters when reading P/M memory. It d
 | Shape count | **54** (0..53) | id 4 has width/height 0 and is never drawn — used as a "park" value; the store at `$5423` zeroes anything ≥ `$36` |
 | frame → shape id | `$55B1` | `FRAME_SHAPE[]`, **199 entries** |
 | per-shape height | `$6BC0` | height of the segment-encoded source data, not the on-screen height |
-| per-shape width | `$5384` | width in sprite pixels — matches the captured sprites exactly |
+| per-shape width | `$5384` | the arena-clamp width, **not** the drawn width; the captured poses run 1-3 px wider, and three ids carry 0 here while being drawn normally |
 | segment struct ptr | `$6800 + id*2` → `$6900 + id*12` | 12-byte struct per shape (pointer table steps by 12 — verified) |
 | pixel data ptr | `$6880 + id*2` | all shapes packed consecutively from `$6C00`, `height*8` bytes each, 10,816 B total |
 
