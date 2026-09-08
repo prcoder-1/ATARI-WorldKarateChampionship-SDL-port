@@ -5,22 +5,30 @@
  *
  * The central idea recovered from the ROM ($53BC, $530F, $5509, $51F9):
  *
- *   A fighter's state IS an index into the 120-entry per-frame tables.
+ *   A fighter's state IS an index into the per-frame tables.
  *
- * $6181,y holds the move id and $EE,y the animation frame index. Each video frame the
+ * $6181,y holds the move id and $EE,y the animation frame index. Each game tick the
  * index advances by one; when it reaches MOVE_FRAME_START[move+1] the move is over and
  * the queued move is taken. Per frame, FRAME_ATTR says what may happen, FRAME_VELX how
  * far the fighter slides, and FRAME_SHAPE which pose to draw.
  *
- * Two consequences worth stating, because they are what made the old port feel wrong:
+ * Three consequences worth stating, because they are what made the port feel wrong:
  *
  *   - There is NO vertical motion and no gravity. $5509 only ever touches $E0/$E1, the
  *     horizontal position. Jumps, somersaults and falls are drawn into the poses; each
  *     pose carries its own absolute top scanline (ShapePM.y0).
  *   - Move duration is not tunable: it is exactly the length of the move's frame range.
+ *   - **Half of this routine belongs to joystick-controlled fighters only.** $53D6 and
+ *     $543F both test $0050,y and jump over the whole block when it is zero, so a CPU
+ *     fighter never reverses a held pose, never stalls on an ATTR_HOLD frame, and never
+ *     re-dispatches on an ATTR_INPUT frame. It plays each move it starts straight
+ *     through. Missing that gate is what made the CPU opponent's movement break up: it
+ *     unwound poses backwards and restarted moves partway.
+ *     Confirmed against the machine: over 30 RAM dumps taken during a fight, in all 60
+ *     samples of a CPU-controlled fighter $6187 (reverse) and $6185 (hold) are zero.
  *
- * Fighter x is the sprite's LEFT EDGE in sprite-pixel units, clamped so that
- * [x, x + SHAPE_WIDTH[shape]] stays inside the arena $10..$AE.
+ * Fighter x is the sprite's LEFT EDGE in sprite-pixel units, an 8-bit quantity clamped
+ * by $553E/$5564 so the figure stays inside the arena $10..$AE.
  */
 #ifndef FIGHTER_H
 #define FIGHTER_H
@@ -44,11 +52,11 @@
 #define MOVE_FALL      0x12   /* 18: struck from behind                        */
 
 typedef struct {
-    int x;          /* $E0,y  left edge, arena units                */
+    int x;          /* $E0,y  left edge, arena units, 8-bit         */
     int facing;     /* $E2,y  0 = faces right, 1 = faces left       */
     int flipmark;   /* $E4,y  set when ATTR_FLIP flipped the facing */
     int move;       /* $6181,y                                      */
-    int frame;      /* $EE,y  index into the 120-entry tables       */
+    int frame;      /* $EE,y  index into the per-frame tables       */
     int next;       /* $F0,y                                        */
     int queued;     /* $EC,y  move selected by input or the AI      */
     int shape;      /* $DD,y                                        */
@@ -62,6 +70,7 @@ typedef struct {
     int idle;       /* $618B,y  idle counter feeding the taunt      */
     int hold;       /* $6185,y  frames spent held on an ATTR_HOLD frame */
     int isHuman;    /* $0050,y  nonzero = joystick, zero = the CPU routine */
+    int index;      /* $D2      which fighter this is, 0 or 1       */
     /* port-side extras, not part of the ROM state */
     int isCPU;
     int points;
@@ -69,17 +78,24 @@ typedef struct {
     int wins;
 } Fighter;
 
+/* $6114: the fighter an ATTR_TURN frame handed the turn to. $3C2E reads it to order the
+ * pair -- $611C takes $EA[owner] and $611D $EA[the other], and $EA holds the two figures'
+ * colours ($0F and $36, set at $32C8) -- so the owner is the one composed first. */
+static int fgtTurnOwner;
+
 /* --- $530F: choose the next move ------------------------------------------------ */
 static void fgtStartMove(Fighter* f, int forced, unsigned (*rnd)(void))
 {
     int m;
-    if (forced >= 0) {
+    if (forced >= 0) {                     /* $5313: play frozen, $6131 is imposed */
         m = forced;
-    } else if (f->queued) {
+        f->queued = m;                     /* it goes through $EC like any other   */
+        f->idle = m;
+    } else if (f->queued) {                /* $531D -> $535A */
         m = f->queued;
-        f->idle = m;                       /* $535A also re-arms the idle counter */
+        f->idle = m;                       /* $535A stores the move into $618B too */
     } else {
-        f->idle = (f->idle + 1) & 0xFF;
+        f->idle = (f->idle + 1) & 0xFF;    /* $5324 */
         if (f->idle >= 0x80 && (rnd() & 0xFF) < 0x10) {
             m = MOVE_IDLE;                 /* $5337 */
             f->idle = 0x10 + (rnd() & 0x3F);
@@ -88,112 +104,130 @@ static void fgtStartMove(Fighter* f, int forced, unsigned (*rnd)(void))
         }
     }
     if (m < 0 || m >= NUM_MOVE_IDS) m = 0;
-    f->move = m;
-    f->frame = f->next = MOVE_FRAME_START[m];
-    f->samemove = 1;
-    f->reverse = f->recovery = f->flipmark = 0;
-    f->hold = 0;
-    f->attr = f->prevattr = 0;
+    f->move = m;                                   /* $535D */
+    f->frame = f->next = MOVE_FRAME_START[m];      /* $5361 */
+    f->samemove = 1;                               /* $536A */
+    f->reverse = f->recovery = f->hold = 0;        /* $536F */
+    f->flipmark = 0;
+    f->attr = f->prevattr = 0;                     /* $537D */
 }
 
-/* --- $5509: apply this frame's horizontal velocity and clamp to the arena -------- */
-static void fgtApplyVel(Fighter* f)
+/* --- $5509/$550E: apply this frame's horizontal velocity and clamp to the arena ---
+ * back is the direction flag the ROM branches on at $550E: nonzero subtracts. On the
+ * normal path it is the facing ($550B); on the reverse path it is reverse EOR facing
+ * ($54FF), so an unwinding pose slides back the way it came. */
+static void fgtApplyVelDir(Fighter* f, int back)
 {
     int v = FRAME_VELX[f->frame];
     int w = SHAPE_WIDTH[f->shape % NUM_SHAPES];
     int left, right;
-    f->x += f->facing ? -v : v;
-    if (f->facing) { right = f->x + 0x24; left = right - w; }
-    else           { left  = f->x;        right = left + w; }
-    if (left  < ARENA_LEFT)  f->x += ARENA_LEFT  - left;
-    if (right > ARENA_RIGHT) f->x -= right - ARENA_RIGHT;
-}
 
-/* --- $54E5: the reverse-playback path (a held pose unwinding) -------------------- */
-static void fgtReverse(Fighter* f, int freezeMove, unsigned (*rnd)(void))
-{
-    f->frame--;
-    if (f->frame < MOVE_FRAME_START[f->move]) {
-        f->reverse = 0;
-        fgtStartMove(f, freezeMove, rnd);
-        return;
+    if (back) {                                    /* $5510 */
+        f->x = (f->x - v) & 0xFF;
+        right = f->x + 0x24;                       /* $551D */
+        left  = right - w;                         /* $5522 */
+    } else {                                       /* $552A */
+        f->x = (f->x + v) & 0xFF;
+        left  = f->x;
+        right = left + w;                          /* $5539 */
     }
-    f->shape = FRAME_SHAPE[f->frame];
-    if (f->shape >= 0x36) f->shape = 0;
-    fgtApplyVel(f);
-    f->next = f->frame;
+
+    if (ARENA_LEFT >= left) {                      /* $553E: CMP #$10 / BCC $5564 */
+        if (!f->facing) {
+            f->x = ARENA_LEFT;                     /* $5549 */
+        } else {
+            int t = 0x12 + w - 0x24;               /* $5551, and note the $12 */
+            f->x = t < 0 ? 0 : t;                  /* $555A: BCS / LDA #$00    */
+        }
+    } else if (ARENA_RIGHT < right) {              /* $5564: CMP #$AE / BCS $5580 */
+        if (!f->facing) f->x = ARENA_RIGHT - w;    /* $556F */
+        else            f->x = 0x8A;               /* $557B */
+    }
+    if (f->x >= 0xF0) f->x = 0;                    /* $5580: the underflow guard */
 }
 
-/* --- $53BC: one frame of a fighter ----------------------------------------------- */
+/* --- $53BC: one tick of a fighter ------------------------------------------------
+ * A straight transcription, labels and all, because the control flow matters: $546A
+ * and $54AD both re-enter the routine partway, and the reverse path at $54E5 falls
+ * back into it through $5407 rather than returning. */
 static void fgtUpdate(Fighter* f, int freezeMove, unsigned (*rnd)(void))
 {
-    int guard, restarts;
-    if (f->locked) return;
+    int guard, spins;
 
-    for (restarts = 0; restarts < 4; restarts++) {
-        f->facing &= 1;
+    if (f->locked) return;                                   /* $53BE -> $54E4 */
 
-        if (f->queued != f->move) f->samemove = 0;      /* $53C6 */
-        if (!f->samemove && f->recovery) f->reverse = 1;/* $53E5 */
-        if (f->reverse) { fgtReverse(f, freezeMove, rnd); return; }  /* $53F4 */
-
-        f->frame = f->next;                             /* $53FC */
-        if (!f->move) fgtStartMove(f, freezeMove, rnd);
-        /* $540A: past the end of this move's frame range -> take the next move */
-        for (guard = 0; f->frame >= MOVE_FRAME_START[f->move + 1] && guard < 8; guard++) {
-            fgtStartMove(f, freezeMove, rnd);
-            f->frame = f->next;
+    for (spins = 0; spins < 8; spins++) {
+    /* L53C6 */
+        f->facing &= 1;                                      /* $53C6 */
+        f->isHuman &= 1;                                     /* $53CE */
+        if (f->isHuman) {                                    /* $53D6: CPU skips it all */
+            if (f->queued != f->move) f->samemove = 0;       /* $53D8 */
+            if (!f->samemove && f->recovery) f->reverse = 1; /* $53E5 */
+            if (f->reverse) {                                /* $53F4 -> $54E5 */
+                f->frame--;                                  /* $54E5 */
+                if (f->frame >= MOVE_FRAME_START[f->move]) { /* $54EF: CMP $558D,x */
+                    f->shape = FRAME_SHAPE[f->frame];        /* $54F7, no $36 guard */
+                    fgtApplyVelDir(f, 1 ^ (f->facing & 1));  /* $54FF */
+                    return;                                  /* $5508 */
+                }
+                goto L5407;                                  /* $54F4 */
+            }
         }
+
+        f->frame = f->next;                                  /* $53FC */
+        if (f->move) goto L540A;                             /* $5402 */
+    L5407:
+        fgtStartMove(f, freezeMove, rnd);                    /* $5407: JSR $530F */
+    L540A:
+        /* $540A: past the end of this move's range -> take the next one */
+        for (guard = 0; guard < 16 && f->frame >= MOVE_FRAME_START[f->move + 1]; guard++)
+            fgtStartMove(f, freezeMove, rnd);                /* $5415 -> $5407 */
         if (f->frame < 0 || f->frame >= NUM_FRAMES) f->frame = MOVE_FRAME_START[0];
 
-        f->shape = FRAME_SHAPE[f->frame];               /* $5418 */
-        if (f->shape >= 0x36) f->shape = 0;
-        f->prevattr = f->attr;
-        f->attr = FRAME_ATTR[f->frame];
-        f->recovery = f->attr & ATTR_RECOVERY;
-        f->gate = f->attr & ATTR_GATE;
+        f->shape = FRAME_SHAPE[f->frame];                    /* $5418 */
+        if (f->shape >= 0x36) f->shape = 0;                  /* $541D */
+        f->prevattr = f->attr;                               /* $5426 */
+        f->attr = FRAME_ATTR[f->frame];                      /* $542C */
+        f->recovery = f->attr & ATTR_RECOVERY;               /* $5432 */
+        f->gate = f->attr & ATTR_GATE;                       /* $5437 */
 
-        /* $5440: the hold branch, which the ROM runs only for a joystick-controlled
-         * fighter -- a CPU fighter never stalls on an ATTR_HOLD frame. */
-        if (f->isHuman && (f->attr & ATTR_HOLD)) {
-            if (f->queued == f->move) {                 /* $546D */
-                if (f->hold & 0x80) return;
-                if (f->hold == 0) fgtApplyVel(f);       /* only on the first held frame */
-                f->hold++;
-                return;
+        if (!f->isHuman) break;                              /* $543F -> $54B0 */
+
+        if (f->attr & ATTR_HOLD) {                           /* $5444 */
+            if (f->queued == f->move) {                      /* $544B -> $546D */
+                if (f->hold & 0x80) return;                  /* $5470 */
+                if (f->hold == 0) fgtApplyVelDir(f, f->facing);  /* $5474 */
+                f->hold = (f->hold + 1) & 0xFF;              /* $5479 */
+                return;                                      /* $547C */
             }
-            if (f->hold) {                              /* $5450: released */
-                f->hold = 0;
+            if (f->hold) {                                   /* $5453: released */
+                f->hold = 0;                                 /* $5458 */
                 f->reverse = 0;
                 f->recovery = 0;
-                f->next = f->frame + 1;
-                continue;                               /* $53C6: run the frame again */
+                f->next = f->frame + 1;                      /* $5463 */
+                continue;                                    /* $546A: JMP $53C6 */
             }
+        }
+
+        if ((f->attr & ATTR_INPUT) && !f->samemove) {        /* $547F/$5486 */
+            if (f->move == AM_WALK_F) goto L5407;            /* $5490 -> $549B */
+            if (f->move == AM_WALK_B) {                      /* $5492 -> $549E */
+                f->x = (f->x + (f->facing ? 3 : -3)) & 0xFF; /* the back-step */
+                goto L5407;                                  /* $54AD */
+            }
+            if (f->queued) goto L5407;                       /* $5496 -> $549B */
         }
         break;
     }
 
-    if ((f->attr & ATTR_INPUT) && !f->samemove) {   /* $547F */
-        if (f->move == AM_WALK_F) {
-            fgtStartMove(f, freezeMove, rnd); f->frame = f->next;
-        } else if (f->move == AM_WALK_B) {
-            f->x += f->facing ? 3 : -3;             /* $549E: the back-step */
-            fgtStartMove(f, freezeMove, rnd); f->frame = f->next;
-        } else if (f->queued) {
-            fgtStartMove(f, freezeMove, rnd); f->frame = f->next;
-        }
-        f->shape = FRAME_SHAPE[f->frame];
-        if (f->shape >= 0x36) f->shape = 0;
-        f->attr = FRAME_ATTR[f->frame];
-    }
-
-    if (f->attr & ATTR_FLIP) {                      /* $54B0 */
+    if (f->attr & ATTR_FLIP) {                               /* $54B0 */
         f->facing ^= 1;
         f->flipmark = 1;
     }
-    if (f->attr & ATTR_LOCK) f->locked = 1;
-    fgtApplyVel(f);
-    f->next = f->frame + 1;
+    if (f->attr & ATTR_TURN) fgtTurnOwner = f->index;        /* $54C4: STY $6114 */
+    if (f->attr & ATTR_LOCK) f->locked = 1;                  /* $54CE */
+    fgtApplyVelDir(f, f->facing);                            /* $54DA */
+    f->next = f->frame + 1;                                  /* $54DD */
 }
 
 /* --- $51F9: joystick (or AI) direction+fire -> queued move ----------------------- */

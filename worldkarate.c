@@ -97,6 +97,7 @@ static Fighter p1,p2;
 static int roundTime;      /* $6154: referee traversals left in the round */
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
+static int updateParity;   /* $6115: which fighter is driven first this tick */
 static int speedIndex=GAME_TICK_DEFAULT;  /* $619B: which divider is in use */
 static int clockTick;      /* $6141: frames until the next second */
 /* $6159/$615B/$615A/$615C/$615E: the referee's current action -- how far through it he
@@ -272,10 +273,10 @@ static void drawHUD(void)
 }
 
 /* ---------------- round / match flow ---------------- */
-static void placeFighter(Fighter* f,int x,int facing)
+static void placeFighter(Fighter* f,int x,int facing,int index)
 {
     memset(f,0,sizeof *f);
-    f->x=x; f->facing=facing;
+    f->x=x; f->facing=facing; f->index=index;   /* $D2 */
     f->move=0; f->frame=f->next=MOVE_FRAME_START[0];
     f->shape=FRAME_SHAPE[f->frame];
 }
@@ -284,8 +285,8 @@ static void resetPositions(void)
 {
     int cpu=p2.isCPU, w1=p1.wins, w2=p2.wins, s1=p1.points, s2=p2.points;
     /* $2F7C places both fighters at $54 */
-    placeFighter(&p1,T_START_X-0x20,0);   /* faces right */
-    placeFighter(&p2,T_START_X+0x20,1);   /* faces left  */
+    placeFighter(&p1,T_START_X-0x20,0,0);   /* faces right */
+    placeFighter(&p2,T_START_X+0x20,1,1);   /* faces left  */
     p2.isCPU=cpu; p1.wins=w1; p2.wins=w2; p1.points=s1; p2.points=s2;
     /* $0050,y: nonzero = joystick, zero = the CPU routine */
     p1.isHuman=1;
@@ -389,7 +390,12 @@ static int gameTickDue(int frozen)
 /* one game tick: input, the CPU opponent, both state machines, and scoring */
 static void fightTick(const Uint8* keys)
 {
-    Fighter* order[2] = { &p1, &p2 };
+    /* $51C3: $D2 takes $6115, which $3C62 toggles every tick, so which fighter is
+     * driven first alternates from tick to tick. */
+    Fighter* order[2];
+    order[0] = updateParity ? &p2 : &p1;
+    order[1] = updateParity ? &p1 : &p2;
+    updateParity ^= 1;
 
     /* $51F9. The alternate (close-quarters) dispatch tables come in when the fighters
      * are close, the opponent's input gate is open, and MOVE_GATE allows it here. */
@@ -405,9 +411,12 @@ static void fightTick(const Uint8* keys)
     for(int i=0;i<2;i++){
         Fighter* f=order[i]; Fighter* o=order[i^1];
         if(!f->isHuman){
-            /* $3D04, then $3E32: queue the move, start it, clear the queue */
+            /* $3D04, then $3E32: STA $EC,y / JSR $530F / clear $EC,y. The move has to
+             * go in through the queue, because $530F's queued branch also re-arms the
+             * idle counter ($535A) -- forcing the move instead left the CPU fighter's
+             * idle counter running until it fired off taunts mid-fight. */
             int m = aiChooseMove(f, o, aiSkill, rnd);
-            if(m >= 0){ f->queued = m; fgtStartMove(f, m, rnd); f->queued = 0; }
+            if(m >= 0){ f->queued = m; fgtStartMove(f, -1, rnd); f->queued = 0; }
         }
         fgtUpdate(f,-1,rnd);
     }
@@ -538,8 +547,12 @@ int main(int argc,char**argv)
         drawBackground();
         if(gstate!=G_TITLE){
             drawReferee();
-            if(p1.x<=p2.x){ drawFighter(&p1,rgb(235,235,235)); drawFighter(&p2,rgb(150,60,70)); }
-            else          { drawFighter(&p2,rgb(150,60,70));   drawFighter(&p1,rgb(235,235,235)); }
+            /* $3C2E composes the pair in an order set by $6114, the fighter an
+             * ATTR_TURN frame last handed the turn to: $611C takes that fighter's
+             * colour from $EA and $611D the other's. Ordering by x instead made the
+             * two pop past each other the moment they crossed. */
+            if(fgtTurnOwner){ drawFighter(&p1,rgb(235,235,235)); drawFighter(&p2,rgb(150,60,70)); }
+            else            { drawFighter(&p2,rgb(150,60,70));   drawFighter(&p1,rgb(235,235,235)); }
             drawHUD();
         }
         if(gstate==G_TITLE){

@@ -45,12 +45,15 @@ static void run(Fighter* f, int stick, int fire, int frames,
     }
 }
 
+/* $0050,y defaults to "joystick" here: most of $53BC is the joystick path, and the
+ * CPU path gets its own section below. */
 static void reset(Fighter* f, int x, int facing)
 {
     memset(f, 0, sizeof *f);
     f->x = x; f->facing = facing;
     f->frame = f->next = MOVE_FRAME_START[0];
     f->shape = FRAME_SHAPE[f->frame];
+    f->isHuman = 1;
 }
 
 int main(void)
@@ -142,6 +145,89 @@ int main(void)
         printf("    crouch held on one frame for %d ticks, $6185 = %d\n", heldFor, f.hold);
         check(heldFor > 10, "a held frame stalls the animation");
         check(f.hold > 0, "$6185 counts the hold");
+    }
+
+    /* $53D6 and $543F both test $0050,y and skip the whole block when it is zero, so a
+     * CPU fighter plays every move it starts straight through: no reverse unwind, no
+     * hold, no re-dispatch partway. The machine agrees -- across 30 RAM dumps taken
+     * during a fight, all 60 samples of a CPU fighter have $6187 = $6185 = 0. */
+    printf("a CPU-controlled fighter plays each move straight through\n");
+    {
+        int reversed = 0, held = 0, restarted = 0;
+        for (int m = 1; m < NUM_MOVE_IDS; m++) {
+            reset(&f, 0x60, 0);
+            f.isHuman = 0;
+            f.queued = m; fgtStartMove(&f, -1, rnd); f.queued = 0;
+            int prevMove = -1, prevFrame = -1;
+            for (int i = 0; i < 120; i++) {
+                /* the stick is irrelevant to a CPU fighter, but keep it asking for
+                   something else, which is exactly what used to break the animation */
+                f.queued = (i & 1) ? AM_WALK_F : 0;
+                fgtUpdate(&f, -1, rnd);
+                if (f.reverse) reversed++;
+                if (f.hold) held++;
+                /* a move that runs off its own end and is picked again restarts
+                   legitimately; a move that jumps back from the middle does not */
+                if (f.move == prevMove && f.frame < prevFrame
+                    && prevFrame + 1 < MOVE_FRAME_START[prevMove + 1]) {
+                    if (restarted < 4)
+                        printf("    move %2d: frame went %3d -> %3d, mid-range\n",
+                               f.move, prevFrame, f.frame);
+                    restarted++;
+                }
+                prevMove = f.move; prevFrame = f.frame;
+                if (f.locked) break;
+            }
+        }
+        check(reversed == 0, "$6187 stays clear: a CPU fighter never unwinds a pose");
+        check(held == 0, "$6185 stays clear: a CPU fighter never holds a frame");
+        check(restarted == 0, "and never restarts a move partway through it");
+    }
+
+    printf("horizontal velocity and the arena clamps ($5509/$553E/$5564)\n");
+    {
+        /* $550E branches on the direction flag: clear adds FRAME_VELX, set subtracts.
+         * The reverse path at $54FF passes reverse EOR facing, so an unwinding pose
+         * slides back the way it came -- which is the whole point of the flag. */
+        int moved = 0, opposite = 0;
+        for (int fr = 0; fr < NUM_FRAMES; fr++) {
+            if (!FRAME_VELX[fr]) continue;
+            moved++;
+            reset(&f, 0x60, 0); f.frame = fr; f.shape = FRAME_SHAPE[fr];
+            int base = f.x;
+            fgtApplyVelDir(&f, 0);
+            int fwd = f.x - base;
+            reset(&f, 0x60, 0); f.frame = fr; f.shape = FRAME_SHAPE[fr];
+            fgtApplyVelDir(&f, 1);
+            int back = f.x - base;
+            if (fwd == -back && fwd != 0) opposite++;
+        }
+        printf("    %d frames carry a velocity; %d reverse cleanly\n", moved, opposite);
+        check(moved > 0, "some frames carry a horizontal velocity");
+        check(opposite == moved, "the direction flag mirrors the step exactly");
+
+        /* Where each of the four clamps parks the fighter, applied once to a position
+         * already over the line. The extent comes from the direction flag and the
+         * landing from the facing, which is how $5509 and $553E/$5564 split the work. */
+        int fz = 0;                      /* a frame that carries no velocity */
+        while (fz < NUM_FRAMES && FRAME_VELX[fz]) fz++;
+        int w = SHAPE_WIDTH[0];
+
+        reset(&f, 0x08, 0); f.frame = fz; f.shape = 0;
+        fgtApplyVelDir(&f, 0);
+        check(f.x == ARENA_LEFT, "$5549: facing right, the left wall parks x at $10");
+
+        reset(&f, 0x02, 1); f.frame = fz; f.shape = 0;
+        fgtApplyVelDir(&f, 1);
+        check(f.x == 0x12 + w - 0x24, "$5551: facing left, it parks at $12 + width - $24");
+
+        reset(&f, 0xA8, 0); f.frame = fz; f.shape = 0;
+        fgtApplyVelDir(&f, 0);
+        check(f.x == ARENA_RIGHT - w, "$556F: facing right, the right wall parks at $AE - width");
+
+        reset(&f, 0x9C, 1); f.frame = fz; f.shape = 0;
+        fgtApplyVelDir(&f, 1);
+        check(f.x == 0x8A, "$557B: facing left, the right wall parks at $8A");
     }
 
     printf("every dispatch entry maps to a real move\n");

@@ -16,10 +16,12 @@ verify-scenes: verify_scenes.c atari_gfx.h generated/scenes.h
 	/tmp/verify_scenes
 	python3 verify_scenes.py
 
-# Exercise the ported fighter state machine headlessly.
+# Exercise the ported fighter state machine headlessly, then check the same machine's
+# invariants against RAM dumps taken while the real game was fighting.
 verify-fighter: verify_fighter.c fighter.h game_data.h
 	$(CC) $(CFLAGS) -I. verify_fighter.c -o /tmp/verify_fighter $(LDLIBS)
 	/tmp/verify_fighter
+	python3 verify_fighter_dumps.py
 
 # Run the music player headlessly and render it to a WAV.
 verify-music: verify_music.c pokey.h generated/music.h
@@ -27,7 +29,9 @@ verify-music: verify_music.c pokey.h generated/music.h
 	/tmp/verify_music
 	python3 verify_music.py
 
-# Establish that the game really has no sound effects (a scan, not an assertion).
+# Render the six digitised sound effects and check them against $3A7C/$3AE0/$399D.
+# (An earlier version of this target set out to show the game had no sound effects at
+# all. It has six; the scan had only looked at the demo, where they are switched off.)
 verify-sfx: verify_sfx.c sfx.h generated/sfx.h
 	$(CC) $(CFLAGS) -I. verify_sfx.c -o /tmp/verify_sfx $(LDLIBS)
 	/tmp/verify_sfx
