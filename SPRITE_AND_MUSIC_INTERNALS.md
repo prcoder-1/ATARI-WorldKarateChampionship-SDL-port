@@ -85,8 +85,11 @@ objects fixed positions that never change. Measured over 187 captured frames he 
 exactly the same place in 181 of them -- the other six are the announcement sign, which
 the isolator picked up instead of him.
 
-His graphics are not in the fighters' shape table, and `$595A` only draws the small
-markers that accompany him -- which are the ippon pips in the HUD, drawn into the second
+His figure is not in the fighters' shape table, and `$595A` draws only the small
+markers that accompany him -- eleven scanlines of two Players, written into the second
+P/M area at `$04A8`/`$05A8`, chosen from `$599B` by which of his three actions is
+running, with their positions computed in `$5A91` from the action counter `$6159` so
+they move as he signals -- which are the ippon pips in the HUD, drawn into the second
 P/M area at `$0400-$07FF`. So he is captured from the screen instead
 (`extract_referee.py`): 9 px by 32 scanlines at clock 320, scanline 137, agreed by 124 of
 185 frames. Frames where both fighters are on a standing pose leave his band clear, which
@@ -133,6 +136,34 @@ chosen: white gi `211,211,211`, red gi `132,55,63`, skin `189,113,121`, outline
 
 `verify_sprites.py` re-renders every pose the way `worldkarate.c` draws it, both
 facings, and compares with the original screenshots pixel for pixel.
+
+### The sign he holds up
+
+He also holds up a sign, beside him at clock 264, scanline 145, 48 colour clocks by 13
+scanlines, always the same size and always in that place. It says what has happened:
+**BEGIN**, **HALF POINT**, **FULL POINT**, **RED** or **WHITE** for who scored, and a
+bonus figure at the end of a bout.
+
+It cannot be decoded, only photographed. The wording is nowhere in RAM or on the disk,
+in ASCII or in the game's own character codes -- the disk data is packed -- and the
+`$0800` character memory that covers the whole ground (twelve ANTIC mode 4 rows,
+scanlines 137..232, from the display list at `$62CC`) is blank in every dump taken while
+a sign is on screen. So the sign is a Player/Missile object, like the referee himself.
+
+`harvest_signs.sh` photographs the attract-mode demo, which plays a whole bout and puts
+the signs up on its own; `extract_signs.py` collects the distinct ones and names them.
+The names are read off the rendered bitmaps by eye -- there is no other way to get them
+-- and are keyed by bitmap in the generator so a re-run cannot shuffle them; a sign that
+turns up without a name is emitted unnamed rather than guessed at. The extractor then
+draws every sign back over each capture it came from and refuses to emit unless they
+match exactly.
+
+One trap: the sign's top-right corner is cut, and the ground shows through it. The ground
+colour differs from scene to scene, so treating it as part of the sign turned one sign
+into several. It is transparent.
+
+Nine signs so far, over 1047 captures. There will be others the demo did not reach --
+what happens at the end of a match, for one -- and they are simply not in the set yet.
 
 ## 1.2 The P/M area is double-buffered
 

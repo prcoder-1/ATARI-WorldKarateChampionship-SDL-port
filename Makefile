@@ -4,7 +4,8 @@ PKG     := $(shell pkg-config --cflags --libs sdl2)
 LDLIBS  += -lm
 
 worldkarate: worldkarate.c fighter.h ai.h pokey.h sfx.h hud.h atari_gfx.h game_data.h \
-             generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h generated/hud.h
+             generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h \
+             generated/hud.h generated/signs.h
 	$(CC) $(CFLAGS) $< -o $@ $(PKG) $(LDLIBS)
 
 run: worldkarate
@@ -41,14 +42,19 @@ verify-sfx: verify_sfx.c sfx.h generated/sfx.h
 verify-sprites:
 	python3 verify_sprites.py
 
+# The sign extractor is its own check too: it re-draws every sign back over each
+# capture it came from and refuses to emit unless they match exactly.
+verify-signs:
+	python3 extract_signs.py
+
 # The HUD extractor is its own check: it refuses to emit unless re-rendering the two
 # mode 4 rows reproduces the capture exactly.
 verify-hud:
 	python3 extract_hud.py
 
-verify: verify-scenes verify-sprites verify-fighter verify-music verify-sfx verify-hud
+verify: verify-scenes verify-sprites verify-signs verify-fighter verify-music verify-sfx verify-hud
 
 clean:
 	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx
 
-.PHONY: run clean verify verify-scenes verify-sprites verify-fighter verify-music verify-sfx verify-hud
+.PHONY: run clean verify verify-scenes verify-sprites verify-signs verify-fighter verify-music verify-sfx verify-hud

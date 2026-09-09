@@ -182,8 +182,13 @@ def pick(shape, cands, bad):
     for got, ytop, xoff, parity, name in cands:
         groups.setdefault((got.shape, got.tobytes()), []).append(
             (got, ytop, xoff, parity, name))
+    # Valid parity outranks the head count. A spoiled frame drops part of the figure,
+    # and several spoiled captures agree with each other precisely because they are all
+    # missing the same thing: for the pose a struck fighter rests on, five $18 frames
+    # outvoted three frames that included a valid one, and the pose came out with 191
+    # ink pixels instead of 336 -- no outline and no head.
     best = max(groups.values(),
-               key=lambda g: (len(g), sum(1 for c in g if c[3]),
+               key=lambda g: (sum(1 for c in g if c[3]), len(g),
                               int((g[0][0] > 0).sum())))
     got, ytop, xoff, parity, name = best[0]
     return got, name, len(best), len(cands), ytop, xoff

@@ -34,6 +34,7 @@
 #include "sfx.h"                  /* the game's digitised sound effects ($3A7C/$3AE0) */
 #include "hud.h"                  /* the game's HUD: its font, colours and layout      */
 #include "generated/referee.h"    /* the referee, captured from the screen             */
+#include "generated/signs.h"      /* the signs he holds up, captured the same way      */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame -------
@@ -115,6 +116,23 @@ static int refTurns;       /* $6162: completed referee actions */
 static int bg=0;
 static int dan=0;
 static char banner[64]="";
+/* $615C picks one of the referee's three actions; what the player actually reads is the
+ * sign he holds up beside him. The bitmaps are captured (generated/signs.h) and named
+ * there; the port asks for one by name so a missing sign fails visibly rather than
+ * silently drawing the wrong board. */
+static int signIndex=-1;
+static int signTimer;
+
+static int signByName(const char* want)
+{
+    for(int i=0;i<SIGN_COUNT;i++)
+        if(!strcmp(SIGN_NAME[i],want)) return i;
+    return -1;
+}
+static void signShow(const char* want,int frames)
+{
+    signIndex=signByName(want); signTimer=frames;
+}
 static int paused=0;
 static int p2isCPU=1;
 static int aiSkill=1;   /* $F6: the ROM's skill level, 1..5, rising with the DAN rank */
@@ -181,9 +199,25 @@ static void drawFighter(const Fighter* f, Col gi)
  * actions ($58EF starts one, $5807 walks the counter, $5834 ends it). His objects sit at
  * fixed positions taken from $58D1, and over 187 captured frames he is in the same place
  * in 181 of them. He is drawn where he stands. */
+/* The sign he holds up. It is a Player/Missile object like he is, always the same size
+ * and always in the same place beside him; index 0 in a captured sign is the ground
+ * showing through its cut corner. */
+static void drawSign(void)
+{
+    if(signIndex<0 || signIndex>=SIGN_COUNT) return;
+    static const Col board={SIGN_COL_BOARD}, ink={SIGN_COL_INK};
+    for(int y=0;y<SIGN_H;y++)
+        for(int k=0;k<SIGN_W;k++){
+            uint8_t v=SIGN_PX[signIndex][y*SIGN_W+k];
+            if(!v) continue;
+            setcol(v==SIGN_IDX_BOARD?board:ink);
+            fillrect(SIGN_X+k*SIGN_CLOCKS_PER_PX, SIGN_Y+y, SIGN_CLOCKS_PER_PX, 1);
+        }
+}
+
 static void drawReferee(void)
 {
-    if(gstate!=G_FIGHT && gstate!=G_POINT) return;
+    if(gstate!=G_FIGHT && gstate!=G_POINT && gstate!=G_ROUND_END) return;
     for(int y=0;y<REF_H;y++)
         for(int k=0;k<REF_W;k++){
             uint8_t v=REF_PX[y*REF_W+k];
@@ -316,6 +350,7 @@ static void newBout(void)
     clockTick = T_CLOCK_TICK;
     tickCounter = 0;
     refBusy=0; refTurns=0; refereeBegin();
+    signShow("BEGIN",T_BEGIN);
     resetPositions();
     gstate=G_FIGHT;
    }
@@ -363,7 +398,9 @@ static void award(Fighter* a,int val)
     int total=ROUND_TRAVERSALS[roundIndex%3];
     int elapsed=(total-roundTime)*0x28/(total?total:1);
     lastBonus=score_time_bonus(elapsed)*100;
-    strcpy(banner, val>=2 ? "IPPON!" : "WAZA-ARI");
+    /* the game's own wording, off its signs: a half point or a full one */
+    signShow(val>=2 ? "FULL POINT" : "HALF POINT", T_FREEZE);
+    strcpy(banner, "");
        gstate=G_POINT; stateTimer=T_FREEZE;   /* $2FEA: 128 frames */
     int fromFront = (a->x < d->x) ? (d->facing==1) : (d->facing==0);
     d->queued = fromFront ? MOVE_HIT : MOVE_FALL;
@@ -461,13 +498,15 @@ static void vblank(void)
         }
         if((refereeStep() && --roundTime<=0) || roundClock==0){
             gstate=G_ROUND_END; stateTimer=T_BEGIN;
-            if(p1.points>p2.points){ p1.wins++; strcpy(banner,"AKA WINS ROUND"); }
-            else if(p2.points>p1.points){ p2.wins++; strcpy(banner,"SHIRO WINS ROUND"); }
-            else strcpy(banner,"DRAW");
+            /* the signs name the fighters by their gi, RED and WHITE */
+            if(p1.points>p2.points){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
+            else if(p2.points>p1.points){ p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,""); }
+            else { signIndex=-1; strcpy(banner,"DRAW"); }
         }
-        if(p1.points>=4){ p1.wins++; strcpy(banner,"AKA WINS!"); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
-        if(p2.points>=4){ p2.wins++; strcpy(banner,"SHIRO WINS!"); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
+        if(p1.points>=4){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
+        if(p2.points>=4){ p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,""); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
     }
+    if(signTimer>0 && --signTimer==0) signIndex=-1;
     soundFrame();
 }
 
@@ -560,6 +599,7 @@ int main(int argc,char**argv)
         drawBackground();
         if(gstate!=G_TITLE){
             drawReferee();
+            drawSign();
             /* $3C2E composes the pair in an order set by $6114, the fighter an
              * ATTR_TURN frame last handed the turn to: $611C takes that fighter's
              * colour from $EA and $611D the other's. Ordering by x instead made the

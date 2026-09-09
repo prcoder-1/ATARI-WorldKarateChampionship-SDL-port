@@ -35,6 +35,7 @@ CAPTURES = sys.argv[1:] or ["../extracted/colour4"]
 HEADER = "generated/shapes_pm.h"
 CLOCKS_PER_PX = 2
 FX_ORIGIN = 28            # $E1 -> colour clocks: 2*x + 28, as worldkarate.c has it
+MARGIN = 2                # how far outside the pose to look for ink it should have had
 GI_RED = (132, 55, 63)
 GI_WHITE = (211, 211, 211)
 SKIN = (189, 113, 121)
@@ -74,25 +75,45 @@ def compare(pose, im, origin, facing, gi, mirror):
     fighter faces left, because the bitmaps are stored facing right.
     """
     colour = {1: gi, 2: SKIN, 3: OUTLINE}
+    # Only gi and skin count as ink the pose was obliged to cover. Black does not: the
+    # game paints a shadow on the ground under a fighter, a scanline or two below the
+    # sprite, and it is not part of the sprite.
+    ink = {gi, SKIN}
     grid, y0, x0 = pose
     h, w = grid.shape
     left = origin + (x0 if facing else mirror - x0 - w * CLOCKS_PER_PX)
-    diff = total = 0
+
+    # Paint the pose into a canvas the way drawFighter does, then compare the canvas
+    # with the capture over a box two pixels larger all round. The margin is what makes
+    # the check symmetric: without it, only pixels the pose paints are ever looked at,
+    # and a pose MISSING ink passes. One did -- the pose a struck fighter rests on had
+    # lost its head, and the sand showed through where the head should be.
+    canvas = {}
     for y in range(h):
-        sy = y0 + y
-        if not 0 <= sy < im.shape[0]:
-            return None
         for k in range(w):
             v = grid[y, w - 1 - k] if facing else grid[y, k]
             if not v:
                 continue
-            want = colour[v]
             for c in range(CLOCKS_PER_PX):
-                sx = left + k * CLOCKS_PER_PX + c
-                if not 0 <= sx < im.shape[1]:
-                    return None
+                canvas[(y0 + y, left + k * CLOCKS_PER_PX + c)] = colour[v]
+
+    diff = total = 0
+    for sy in range(y0 - MARGIN, y0 + h + MARGIN):
+        if not 0 <= sy < im.shape[0]:
+            return None
+        for sx in range(left - MARGIN * CLOCKS_PER_PX,
+                        left + (w + MARGIN) * CLOCKS_PER_PX):
+            if not 0 <= sx < im.shape[1]:
+                return None
+            want = canvas.get((sy, sx))
+            got = tuple(im[sy, sx])
+            if want is None:
+                if got in ink:            # the game drew figure here and the pose did not
+                    total += 1
+                    diff += 1
+            else:
                 total += 1
-                if tuple(im[sy, sx]) != want:
+                if got != want:
                     diff += 1
     return diff, total
 
