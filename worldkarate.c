@@ -315,8 +315,7 @@ static void drawHUD(void)
                ((dan+1)/10)*16 + ((dan+1)%10), dan, p1.score, p2.score,
                p1.wins, p2.wins, gstate==G_TITLE);
     hudDraw(hudCells, LW, LH, setpx1);
-    hudMarkers(p1.points, p2.points, LW, LH, setpx1,
-               235,235,235, 190,90,100);
+    hudMarkers(p1.points, p2.points, LW, LH, setpx1);
 }
 
 /* ---------------- round / match flow ---------------- */

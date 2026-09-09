@@ -464,9 +464,28 @@ in several colours: `$00-$09` digits in value 3, `$0B-$24` letters, `$2C-$35` ta
 digits in value 2, `$28-$2B` D/E/M/O in value 1, `$36-$38` L/T/I in value 1.
 
 Colours were recovered by inverting a capture, as the playfield's were, and reproduce it
-with **0 differing pixels** (`make verify-hud`). The ippon markers over columns 7-8 and
-31-32 are Player/Missile objects built by `$31E1` from `$324C`, not playfield, and are
-excluded from that comparison.
+with **0 differing pixels** (`make verify-hud`). The ippon markers are Player/Missile
+objects built by `$31E1`, not playfield, and are excluded from that comparison; they
+have their own, below.
+
+### The ippon markers
+
+Three bold dots per fighter, and **not a row**: two Points on the upper line and one
+Half-Point below, the lower dot sitting under the right-hand of the pair. Each is drawn
+dark or lit, and lighting them is how the score is shown -- the upper pair fills right to
+left with full points, the lower dot lights on its own for a half point outstanding. The
+port used to draw two dots side by side and no third one at all.
+
+Everything about them is measured off the screen by `extract_pips.py`, since they are
+P/M objects rather than characters: the dot's shape (8 colour clocks by 5 scanlines,
+corners cut), the three offsets `(0,0) (8,0) (8,6)`, the two origins (clock 88 and clock
+280, scanline 17) and both colours. Across 897 captures every cluster agrees, and the
+extractor re-renders each one over its own capture and refuses to emit unless every
+pixel matches (`make verify-pips`).
+
+The lit combinations the demo produces are exactly the four the scheme predicts: none,
+the right upper dot alone, both upper dots, and the lower dot alone. No frame lights the
+left upper dot on its own, which is what fixes the fill order.
 
 **Layout**, from the HUD routine at `$5BB2..$5C8B`:
 

@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "generated/hud.h"
+#include "generated/pips.h"
 
 #define HUD_CELLS (HUD_COLS * HUD_ROWS)
 
@@ -133,29 +134,38 @@ static void hudDraw(const uint8_t* s, int screenW, int screenH,
     }
 }
 
-/* $31E1: the ippon markers, Players drawn over the HUD. points counts half-points,
- * so two of them fill one marker. */
+/* $31E1: the ippon markers -- Players drawn over the HUD, three per fighter.
+ *
+ * Not a row of two, which is what this used to draw: **two Points on the upper line and
+ * one Half-Point below**, the lower dot under the right-hand of the pair. The upper pair
+ * fills right to left as full points are scored and the lower dot lights on its own for
+ * a half point outstanding. `points` counts half-points, so two of them make one Point.
+ *
+ * The dot, its three positions, both players' origins and the two colours are all
+ * measured off the screen by extract_pips.py, which re-renders them over 897 captures
+ * and refuses to emit unless every pixel matches.
+ */
 static void hudMarkers(int p1Points, int p2Points, int screenW, int screenH,
-                       void (*setpx)(int, int, int, int, int),
-                       int r1, int g1, int b1, int r2, int g2, int b2)
+                       void (*setpx)(int, int, int, int, int))
 {
-    const struct { int col, pts, r, g, b; } side[2] = {
-        { HUD_PIP_P1_COL, p1Points, r1, g1, b1 },
-        { HUD_PIP_P2_COL, p2Points, r2, g2, b2 },
-    };
+    static const int origin[2] = { PIP_ORIGIN_P1, PIP_ORIGIN_P2 };
+    static const uint8_t colour[2][3] = { { PIP_COL_DARK }, { PIP_COL_LIT } };
+    const int pts[2] = { p1Points, p2Points };
+
     for (int s = 0; s < 2; s++) {
-        int filled = side[s].pts / 2;
-        for (int m = 0; m < 2; m++) {
-            if (m >= filled) continue;
-            int x0 = HUD_LEFT + side[s].col * 4 * HUD_CLOCKS_PER_PX + m * 10;
-            for (int row = 0; row < 5; row++) {
-                int bits = HUD_PIP[row % HUD_PIP_ROWS];
-                int y = HUD_TOP + 4 + row;
-                if (y >= screenH) break;
-                for (int k = 0; k < 8; k++) {
-                    if (!(bits & (1 << (7 - k)))) continue;
-                    int x = x0 + k;
-                    if (x < screenW) setpx(x, y, side[s].r, side[s].g, side[s].b);
+        int full = pts[s] / 2, half = pts[s] & 1;
+        for (int i = 0; i < PIP_COUNT; i++) {
+            int lit;
+            if (i == PIP_HALF_INDEX) lit = half;
+            else                     lit = (full >= PIP_COUNT - 1 - i);
+            const uint8_t* c = colour[lit ? 1 : 0];
+            for (int y = 0; y < PIP_H; y++) {
+                int sy = PIP_TOP + PIP_DY[i] + y;
+                if (sy < 0 || sy >= screenH) continue;
+                for (int x = 0; x < PIP_W; x++) {
+                    if (!PIP_PX[y * PIP_W + x]) continue;
+                    int sx = origin[s] + PIP_DX[i] + x;
+                    if (sx >= 0 && sx < screenW) setpx(sx, sy, c[0], c[1], c[2]);
                 }
             }
         }
