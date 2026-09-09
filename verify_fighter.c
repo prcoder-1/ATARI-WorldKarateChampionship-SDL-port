@@ -126,7 +126,7 @@ int main(void)
         for (int i = 0; i < 600; i++) {
             f.queued = fgtDispatch(&f, ST_RIGHT, 1, 0);
             fgtUpdate(&f, -1, rnd);
-            if (am_is_attack_move(f.move)) attacks++;
+            if (am_is_attack(f.move)) attacks++;
         }
         check(attacks > 0, "fire + forward selects an attack move");
 

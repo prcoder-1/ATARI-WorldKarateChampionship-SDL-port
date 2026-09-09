@@ -35,6 +35,7 @@
 #include "hud.h"                  /* the game's HUD: its font, colours and layout      */
 #include "generated/referee.h"    /* the referee, captured from the screen             */
 #include "generated/signs.h"      /* the signs he holds up, captured the same way      */
+#include "hit_test.h"             /* $415D: whether a blow landed                      */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame -------
@@ -240,29 +241,6 @@ static void drawReferee(void)
         }
 }
 
-/* Sprite overlap, which is what the hardware's player-player collision reports.
- * Replaces the old invented limb-hitbox test. */
-static int spritesOverlap(const Fighter* a, const Fighter* b)
-{
-    const ShapePM* sa=&SHAPE_PM[a->shape % SHAPE_COUNT];
-    const ShapePM* sb=&SHAPE_PM[b->shape % SHAPE_COUNT];
-    if(!sa->h||!sb->h||!sa->px||!sb->px) return 0;
-    int ax=spriteLeft(sa,a), bx=spriteLeft(sb,b);
-    for(int y=0;y<sa->h;y++){
-        int sy=sa->y0+y-sb->y0;
-        if(sy<0||sy>=sb->h) continue;
-        for(int k=0;k<sa->w;k++){
-            if(!sa->px[y*sa->w+k]) continue;
-            int ca = a->facing ? (sa->w-1-k) : k;
-            int px = ax+ca*FX_SCALE;
-            int kb = (px-bx)/FX_SCALE;
-            if(kb<0||kb>=sb->w) continue;
-            int cb = b->facing ? (sb->w-1-kb) : kb;
-            if(sb->px[sy*sb->w+cb]) return 1;
-        }
-    }
-    return 0;
-}
 
 /* ---------------- input ----------------
  * Produces an Atari stick nibble (ACTIVE LOW: bit0 up, 1 down, 2 left, 3 right)
@@ -398,27 +376,32 @@ static int refereeStep(void)
 
 /* $2FFA/$3004: a scoring blow freezes play and forces the loser into move 17 or 18,
  * chosen by whether the blow came from the front or from behind. */
-static int lastBonusOf(int val){ return val>=2 ? 200 : 100; }
+/* $4502: $00D9,y takes the blow's weight -- two for a solid one, one for a glancing --
+ * and saturates at 5. $4550 adds $6132 to the fighter's BCD score. */
+static int bcd(int v){ return (v >> 4) * 10 + (v & 0x0F); }
 
-static void award(Fighter* a,int val)
+static void award(Fighter* a, const HitResult* h)
 {
-    Fighter* d=(a==&p1)?&p2:&p1;
-    a->points+=val;
-    a->score += lastBonusOf(val);
+    Fighter* d = (a==&p1)?&p2:&p1;
+    a->points += h->hit;                          /* $4508 */
+    if(a->points > HIT_POINTS_MAX) a->points = HIT_POINTS_MAX;   /* $450B */
+    a->score += bcd(h->score) * 100;              /* $4550, in BCD */
     int total=ROUND_TRAVERSALS[roundIndex%3];
     int elapsed=(total-roundTime)*0x28/(total?total:1);
     lastBonus=score_time_bonus(elapsed)*100;
-    /* the game's own wording, off its signs: a half point or a full one */
-    signShow(val>=2 ? "FULL POINT" : "HALF POINT", T_FREEZE);
+    /* the game's own wording, off its signs. $613F names the announcement the ROM puts
+     * up, but what it indexes has not been established, so the sign is still chosen by
+     * the blow's weight rather than by that number. */
+    signShow(h->hit>=2 ? "FULL POINT" : "HALF POINT", T_FREEZE);
     strcpy(banner, "");
-       gstate=G_POINT; stateTimer=T_FREEZE;   /* $2FEA: 128 frames */
-    int fromFront = (a->x < d->x) ? (d->facing==1) : (d->facing==0);
-    d->queued = fromFront ? MOVE_HIT : MOVE_FALL;
-    d->samemove=0;
-    fgtStartMove(d,d->queued,rnd);            /* $3011/$2747 */
-    /* $2FFE: $D1 is the struck fighter, and $6131 is 0 here ($289D/$2D9F) */
-    freezeWho = d;
-    freezeMove = 0;
+    gstate=G_POINT; stateTimer=T_FREEZE;          /* $2FEA: 128 frames */
+    /* $42D8/$28A5: the move forced on the struck fighter comes from $4062, keyed by the
+     * strike and the pair of facings -- not from a guess about which side it came from */
+    d->queued = h->reaction;
+    d->samemove = 0;
+    fgtStartMove(d, h->reaction, rnd);            /* $3011/$2747 */
+    freezeWho = d;                                /* $2FFE */
+    freezeMove = 0;                               /* $6131 is 0 here ($289D/$2D9F) */
 }
 
 /* ---------------- one frame of a fight ---------------- */
@@ -487,11 +470,13 @@ static void fightTick(const Uint8* keys)
     /* Scoring. The original reads a GTIA collision register in the VBI ($3888) to set
      * its hit flag; that path is not modelled, so the port uses the equivalent test in
      * software: an attacking fighter whose sprite overlaps the opponent's connects. */
-    if(am_is_attack_move(p1.move) && spritesOverlap(&p1,&p2)){
-        award(&p1, p1.move>=11 ? 2 : 1); return;
-    }
-    if(am_is_attack_move(p2.move) && spritesOverlap(&p2,&p1)){
-        award(&p2, p2.move>=11 ? 2 : 1); return;
+    /* $288A: JSR $2729 -> $415D, once per tick, after both fighters have moved and
+     * after $3BF9 has toggled $6115 -- which is why the parity handed in is the one
+     * this tick has already flipped to. */
+    {
+        const Fighter* pair[2] = { &p1, &p2 };
+        HitResult h = hitTest(pair, updateParity);
+        if(h.hit) award(h.attacker ? &p2 : &p1, &h);
     }
 }
 

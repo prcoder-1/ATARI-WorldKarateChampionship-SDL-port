@@ -5,7 +5,7 @@ LDLIBS  += -lm
 
 worldkarate: worldkarate.c fighter.h ai.h pokey.h sfx.h hud.h atari_gfx.h game_data.h \
              generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h \
-             generated/hud.h generated/signs.h generated/pips.h
+             generated/hud.h generated/signs.h generated/pips.h generated/hit.h hit_test.h
 	$(CC) $(CFLAGS) $< -o $@ $(PKG) $(LDLIBS)
 
 run: worldkarate
@@ -29,6 +29,12 @@ verify-music: verify_music.c pokey.h generated/music.h
 	$(CC) $(CFLAGS) -I. verify_music.c -o /tmp/verify_music $(LDLIBS)
 	/tmp/verify_music
 	python3 verify_music.py
+
+# Drive the ported hit test over every fighter configuration, and replay it against
+# RAM dumps taken while the real game was fighting.
+verify-hit: verify_hit.c hit_test.h generated/hit.h fighter.h
+	$(CC) $(CFLAGS) -I. verify_hit.c -o /tmp/verify_hit $(LDLIBS)
+	/tmp/verify_hit
 
 # Render the six digitised sound effects and check them against $3A7C/$3AE0/$399D.
 # (An earlier version of this target set out to show the game had no sound effects at
@@ -57,9 +63,9 @@ verify-signs:
 verify-hud:
 	python3 extract_hud.py
 
-verify: verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-music verify-sfx verify-hud
+verify: verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-hit verify-music verify-sfx verify-hud
 
 clean:
-	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx
+	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx /tmp/verify_hit
 
-.PHONY: run clean verify verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-music verify-sfx verify-hud
+.PHONY: run clean verify verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-hit verify-music verify-sfx verify-hud

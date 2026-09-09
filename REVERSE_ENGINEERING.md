@@ -15,7 +15,7 @@ Hardware registers actually touched by the code (counts from the opcode scan):
 | Subsystem | Registers (hits) | What it means |
 |-----------|------------------|---------------|
 | **Fighters = hardware Players** | `HPOSP0-3` (7/4/9/4), `SIZEP0-3`, `GRAFP`, `COLPM0-3`, `GRACTL=$03`, `PMBASE $D407` | The two karateka (and referee) are P/M-graphics sprites, positioned by `HPOSPn`, colored by `COLPMn`. |
-| **Hit detection** | `HITCLR $D01E` written once at init; a single read of `$D004` (P0PF) in the VBI at `$3888` sets the hit flag `$6155` | Contrary to an earlier note here, the code does **not** poll player-vs-player collisions each frame. |
+| **Hit detection** | `$415D`, called once per game tick from the fight loop (`$288A`) | Geometry between points, not pixels. The one collision read in the game (`$D004` at `$388C`) sets `$6155`, which belongs to the referee's loop, not to this. See below. |
 | **Input** | `PORTA $D300` (10, reads at `$3BC7`, `$5205`, `$5277`, `$5EC5`), `CONSOL $D01F` (15), POKEY `KBCODE $D209`/`IRQEN $D20E`/`SKCTL $D20F` | Two joysticks via PIA PORTA (4 bits dir + trigger). START/SELECT/OPTION via CONSOL. Keyboard via POKEY IRQ (menu / options). |
 | **Backgrounds = DLI raster** | `WSYNC $D40A` (29), `VCOUNT $D40B` (15), `NMIEN $C0`, `COLPF0-2`/`COLBK` mid-frame, `DLISTL/H $D402/3` | The beach/temple/mountain scenes are drawn as a character/map playfield whose colours are changed per-scanline by Display-List Interrupts (`WSYNC`+`COLxx`), giving the multi-colour sky/sand gradients. |
 | **Sound = 4-ch POKEY** | `AUDF1-4`/`AUDC1-4`, `AUDCTL`, timer-1 IRQ via `IRQEN $D20E` | Two sources that take turns: a three-voice tune, and six **digitised samples** played from a POKEY timer interrupt in volume-only mode. |
@@ -121,6 +121,60 @@ close-quarters pair `$52CF`/`$52EF` when the fighters are close (`$6136 < 8`), t
 opponent's input gate is open, and `MOVE_GATE[$6138]` allows it. `$6138` is a 3-bit
 situation code built by `$3F92` from who is on the right and both facings. The result
 goes to `$EC,y`, the same slot the AI writes.
+
+### Whether a blow landed (`$415D`), ported in full
+
+Called once per game tick from the fight loop (`$288A: JSR $2729`). It is not a sprite
+overlap, and it is not a hardware collision — an earlier version of this document said
+the hit flag came from a GTIA collision register read in the vertical blank. There is
+exactly one collision read in the whole game, `$388C: LDA $D004`, and what it feeds is
+`$6155`, tested by the referee's own loop at `$2FC0`, not by this.
+
+What `$415D` does is compare **points**:
+
+1. **Find the attacker.** A blow can only be thrown on a tick where a fighter's *drawn
+   shape* is one of the eight in `$400B` — not its move, not its frame — and only if
+   that pose has not been held for two ticks or more (`$6185 >= 2`, `$4185`). Both
+   fighters are tried, `$6115`'s parity naming which goes first.
+2. **The strike point** is the attacker's x plus `$4014[strike]`, mirrored inside the
+   `$24` box when it faces left (`$41E4`).
+3. **The defender's shape** maps through `$4082` to a target class. `$80` or more means
+   it cannot be hit at all — 23 of the 54 shapes are like that, which is how a fighter
+   already falling cannot be struck again. Two classes are adjusted: `$18` becomes `$1A`
+   against strike 3 (`$41A2`), and `$13` collapses to 0 when the situation code is 0 or
+   7 (`$41BB`).
+4. **Six body points per class**, `$40BB[class*6 + part]`, each an offset from the
+   defender's x, again `$80` or more for a part that class does not have. A strike
+   reaches only some of them: `$405C[part] AND $401C[strike]`.
+5. **The distance** between the two points is formed one of four ways by the pair of
+   facings (`$6138 AND 3`, `$4244`) and compared with the strike's own limits: under
+   `$402C[strike]` the blow is solid and counts two, between `$402C` and `$4024` it is
+   glancing and counts one, past `$4024` or negative it misses and the next part is
+   tried.
+
+All of it is 8-bit: `$4286`'s `BPL` tests bit 7, so a distance of `$F8` is negative and
+misses. On a hit the routine records the score to add (`$6132`, BCD, `$4550`), an
+announcement (`$613F`), the column for it (`$6140`), the move forced on the defender
+(`$6130`, from `$4062` by strike and facing pair), and makes the attacker the turn owner
+(`$6114`). `$4502` then adds the blow's weight to `$00D9,y`, saturating at 5, and two
+solid blows end the bout (`$28D8`).
+
+Ported to `hit_test.h`; the tables are generated into `generated/hit.h` by
+`extract_hit.py`. `verify_hit.c` sweeps all 32.8 million fighter configurations: 0.56%
+of them land a blow, and every one satisfies the invariants the ROM's structure implies
+— the attacker's shape is always one of the eight, the part struck is always one the
+strike reaches, the distance is always inside `[0, far]`, the defender's class is never
+an unhittable one, and the parity only chooses who is examined first.
+
+**Not carried over:** `$613F` and `$6140` are recorded and unused, because what `$613F`
+indexes has not been established — the port still picks the announcement from the blow's
+weight. And the check against the running machine is weaker than it should be: `$415D`
+runs after `$3BF9`'s wait, so a RAM dump catches the next tick's fighter state beside the
+previous tick's `$D8`, and the two cannot be paired. Over the 30 fight dumps the port
+reports no blow and the game's `$00D8` is zero in all of them, which bounds how often the
+routine fires but does not pair a state with its outcome. An attempt to close that gap by
+patching a probe into `$288D` from the emulator's monitor did not work: the monitor stops
+answering after the first resume.
 
 **Reaction to a blow** (`$2FFA`/`$3004`): play freezes (`$D8`), and the struck fighter is
 forced into move **17** if the blow came from the front or **18** if from behind.
@@ -603,7 +657,5 @@ monitor's `R 438C` rather than playing through the game.
 
 **Still approximated:**
 
-- **Hit detection.** The original sets its hit flag from a GTIA collision register read
-  in the vertical blank (`$3888`); the port uses sprite overlap instead.
 - **The HUD and the title/options/high-score screens**, which are the original's ANTIC mode 4
   text rows and have not been extracted.

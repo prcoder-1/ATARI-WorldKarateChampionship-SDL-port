@@ -255,6 +255,4 @@ static FgtGeom fgtGeometry(const Fighter* a, const Fighter* b)
     return g;
 }
 
-static int am_is_attack_move(int m) { return am_is_attack(m); }
-
 #endif
