@@ -104,6 +104,17 @@ static int roundTime;      /* $6154: referee traversals left in the round */
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
 static int updateParity;   /* $6115: which fighter is driven first this tick */
+/* $00D8 freezes play after a blow. Two things follow, and the port did neither:
+ *   - $51F1 runs the state machine for the fighter named by $D1 ONLY, and skips the
+ *     joystick read entirely ($51EE is the entry that reads sticks; $274A jumps past
+ *     it). The attacker holds its pose.
+ *   - $530F's first branch overrides the queued move with $6131 while $D8 is set, so
+ *     the struck fighter cannot pick up whatever was last asked for.
+ * Without them the attacker kept animating from a queue nothing was refreshing, and a
+ * move still queued when the blow landed repeated for the whole freeze -- releasing the
+ * keys did nothing, because in that state no key is read. */
+static Fighter* freezeWho;
+static int freezeMove;
 static int speedIndex=GAME_TICK_DEFAULT;  /* $619B: which divider is in use */
 static int clockTick;      /* $6141: frames until the next second */
 /* $6159/$615B/$615A/$615C/$615E: the referee's current action -- how far through it he
@@ -404,7 +415,10 @@ static void award(Fighter* a,int val)
     int fromFront = (a->x < d->x) ? (d->facing==1) : (d->facing==0);
     d->queued = fromFront ? MOVE_HIT : MOVE_FALL;
     d->samemove=0;
-    fgtStartMove(d,d->queued,rnd);
+    fgtStartMove(d,d->queued,rnd);            /* $3011/$2747 */
+    /* $2FFE: $D1 is the struck fighter, and $6131 is 0 here ($289D/$2D9F) */
+    freezeWho = d;
+    freezeMove = 0;
 }
 
 /* ---------------- one frame of a fight ---------------- */
@@ -571,9 +585,12 @@ int main(int argc,char**argv)
                         if(gameTickDue(0)) fightTick(SDL_GetKeyboardState(NULL));
                         break;
                     case G_POINT:
-                        /* $3C01: the divider is longer while play is frozen */
-                        if(gameTickDue(1)){ fgtUpdate(&p1,-1,rnd); fgtUpdate(&p2,-1,rnd); }
+                        /* $3C01: the divider is longer while play is frozen, and
+                         * $3017's loop drives one fighter, not both */
+                        if(gameTickDue(1) && freezeWho)
+                            fgtUpdate(freezeWho, freezeMove, rnd);
                         if(--stateTimer<=0){
+                            freezeWho=NULL;
                             if(p1.points>=4||p2.points>=4){ gstate=G_ROUND_END; stateTimer=T_BEGIN; }
                             else { resetPositions(); gstate=G_FIGHT; }
                         }

@@ -184,6 +184,42 @@ int main(void)
         check(restarted == 0, "and never restarts a move partway through it");
     }
 
+    /* $530F's first branch: while $00D8 freezes play, the queued move is overridden by
+     * $6131 rather than obeyed. Without it a move still queued when the blow landed
+     * repeats for the whole freeze -- and nothing can stop it, because $274A skips the
+     * joystick read, so releasing the keys is not even looked at. */
+    printf("a move queued when play freezes does not repeat ($530F/$00D8)\n");
+    {
+        int repeats = 0, ticks = 24;
+        reset(&f, 0x60, 0);
+        f.queued = AM_ATK_U;                       /* the jump kick, fire + up */
+        fgtStartMove(&f, -1, rnd);
+        for (int i = 0; i < ticks; i++) {
+            /* the queue is NOT refreshed: no key is read while play is frozen */
+            fgtUpdate(&f, -1, rnd);                /* as the port used to do */
+            /* the first tick replays the start frame; a later one means a restart */
+            if (i && f.move == AM_ATK_U && f.frame == MOVE_FRAME_START[AM_ATK_U])
+                repeats++;
+        }
+        printf("    obeying the stale queue: the move restarts %d times in %d ticks\n",
+               repeats, ticks);
+        check(repeats > 0, "the stale queue really does make it repeat");
+
+        int again = 0;
+        reset(&f, 0x60, 0);
+        f.queued = AM_ATK_U;
+        fgtStartMove(&f, -1, rnd);
+        for (int i = 0; i < ticks; i++) {
+            fgtUpdate(&f, 0, rnd);                 /* $6131 is 0 here ($289D/$2D9F) */
+            if (i && f.move == AM_ATK_U && f.frame == MOVE_FRAME_START[AM_ATK_U])
+                again++;
+        }
+        printf("    imposing $6131 instead: %d restarts, ending on move %d\n",
+               again, f.move);
+        check(again == 0, "the imposed move stops it restarting");
+        check(f.move == 0, "and the fighter is left standing");
+    }
+
     printf("horizontal velocity and the arena clamps ($5509/$553E/$5564)\n");
     {
         /* $550E branches on the direction flag: clear adds FRAME_VELX, set subtracts.

@@ -125,6 +125,23 @@ goes to `$EC,y`, the same slot the AI writes.
 **Reaction to a blow** (`$2FFA`/`$3004`): play freezes (`$D8`), and the struck fighter is
 forced into move **17** if the blow came from the front or **18** if from behind.
 
+Two things follow from that freeze, and both matter:
+
+- **Only the struck fighter runs.** `$3017`'s loop calls `$274A`, which enters at
+  `$51F1` -- `LDA $D1 / STA $D2 / JSR $53BC`. That is one fighter, the one named by
+  `$D1`, and it deliberately jumps past `$51EE`, the entry that reads the joysticks. So
+  no stick is looked at while play is frozen, and the attacker holds its pose.
+- **The queue is overridden, not obeyed.** `$530F` begins `LDA $D8 / BEQ $531D`, and
+  while the freeze is on it writes `$6131` into `$EC,y` instead of reading it. `$6131`
+  is 0 here (`$289D`, `$2D9F`); `$28EF` sets it to `$20` for the ceremony that ends a
+  bout.
+
+Miss either and a move still queued when the blow lands repeats for the whole freeze,
+with nothing able to stop it -- releasing the key cannot help when no key is read.
+`verify_fighter.c` covers it both ways: obeying the stale queue restarts a jump kick
+three times in 24 ticks, imposing `$6131` restarts it none and leaves the fighter
+standing.
+
 ### The CPU opponent (`$3D04`), ported in full
 
 Runs once per CPU fighter per game tick, immediately before that fighter's state machine
