@@ -679,6 +679,47 @@ Belt names live at `$5EFF`, offsets in `$5F53`, stored with `$36` added to each 
 (`$2D25`/`$2D3D`). In an ordinary bout it is the *only* thing that times the round —
 `$6154` belongs to the bonus stage, see above.
 
+**The belt is read off the score.** It is not a rank awarded for winning anything.
+`$5F66`:
+
+```
+5F66: LDA $50 / AND $51 / BEQ $5F6F / JMP $5FC7   ; two players -> no belt at all
+5F71: LDA $50 / BNE $5F77 / LDY #$03              ; fighter 0's score, or fighter 1's
+5F77: LDA $F8,Y / AND #$F0 / LSR x4 -> $5D        ; the score's third digit
+5F82: LDA $F7,Y / CMP #$10 / BCC / LDA #$09       ; the second, 9 if it has run past 99999
+5F8B: AND #$0F / ASL x4 / ORA $5D                 ; the two digits as one BCD byte
+5F95: CMP $5F59,Y / BCC $5FA2 / INY ...           ; the first threshold it is under
+5FA2: STY $616A                                   ; the belt
+```
+
+`$5F59` = `$06 $12 $18 $26 $40`, and the score's last two digits are always `00`, so:
+
+| belt | score |
+|---|---|
+| WHITE | below 6000 |
+| YELLOW | 6000 |
+| GREEN | 12000 |
+| PURPLE | 18000 |
+| BROWN | 26000 |
+| BLACK | 40000 |
+
+`$5F60` gives each name its colour, and BLACK's is 0 — which sends `$5FAA` to `$14`, the
+clock, so **the black belt's name flashes**.
+
+Confirmed on the machine: poking a score through the monitor and reading back `$616A`
+gives this belt on both sides of all five thresholds, ten cases out of ten.
+
+**The scene turns over every ninth bout.** `$438C` is the whole rule for *which* scene:
+`LDX $5C / INX / CPX #$07 / BCC / LDX #$00` — the next of seven, wrapping, with `$005C`
+holding whichever is loaded and `$613D` the one wanted. In ordinary play the only thing
+that calls it is `$3043`, at the end of the **bonus stage** (`$D0 == 5`), and `$2D57`
+sends the ninth bout there: `$6150` counts bouts at `$2D32` and the comparison is against
+8. So the background changes once every nine bouts, and cycles for ever — nothing about
+it depends on winning, and reaching the last scene is not an ending.
+
+The port has no bonus stage, so it advances the scene on that same bout count. Ending the
+match at the black belt is the **port's** choice; the game itself just keeps going.
+
 **Starting a game** (`$3312`) reads `CONSOL`: **START** gives one player and **SELECT**
 two. Either way `$3337` sets `$50`/`$51`, turns the effects on and the music off.
 

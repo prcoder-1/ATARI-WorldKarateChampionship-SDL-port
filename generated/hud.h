@@ -183,6 +183,14 @@ static const uint8_t HUD_PIP[31]={0xC3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0
  * ROM's storage by subtracting $36 as $5FB8 does */
 #define HUD_BELTS 6
 #define HUD_BELT_LEN 12
+/* $5F66: the belt is a function of the SCORE, not of anything won.
+ * $5F77 builds a byte from the score's second and third digits --
+ * ((F7 & $0F) << 4) | (F8 >> 4), with the top digit clamped to 9 -- and
+ * $5F95 walks these thresholds for the first one it is under. In two
+ * players there is no belt at all ($5F6A). */
+static const uint8_t HUD_BELT_THRESHOLD[HUD_BELTS]={0x06,0x12,0x18,0x26,0x40,0x40};
+/* $5F60: the name's colour; 0 makes it flash from the clock ($5FAA) */
+static const uint8_t HUD_BELT_COLOUR[HUD_BELTS]={0x0C,0x1C,0xBA,0x4A,0x18,0x00};
 static const uint8_t HUD_BELT[HUD_BELTS][HUD_BELT_LEN]={
   {0x21,0x12,0x13,0x1E,0x0F,0x0A,0x0A,0x0A,0x0C,0x0F,0x16,0x1E},
   {0x23,0x0F,0x16,0x16,0x19,0x21,0x0A,0x0A,0x0C,0x0F,0x16,0x1E},

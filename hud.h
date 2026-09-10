@@ -30,6 +30,30 @@
 
 #define HUD_CELLS (HUD_COLS * HUD_ROWS)
 
+/* $5F66: which belt a score has earned.
+ *
+ * Not a rank handed out for winning: the game reads it straight off the score. $5F77
+ * builds a byte out of the score's second and third digits -- ((F7 & $0F) << 4) |
+ * (F8 >> 4), with the leading digit clamped to 9 if the score has run past 99999 --
+ * and $5F95 walks HUD_BELT_THRESHOLD for the first entry it is under. Since the two
+ * lowest digits of the score are always 00 ($455E only ever adds to the middle byte),
+ * the thresholds work out as: WHITE below 6000, then YELLOW, GREEN, PURPLE, BROWN at
+ * 6000, 12000, 18000 and 26000, and BLACK from 40000.
+ *
+ * Confirmed against the machine: poking a score through the monitor and reading back
+ * $616A gives this belt on both sides of all five thresholds, ten cases out of ten.
+ */
+static int hudBelt(int score)
+{
+    int d1 = (score / 100000) % 10;
+    int d2 = (score / 10000) % 10;
+    int d3 = (score / 1000) % 10;
+    int v = ((d1 ? 9 : d2) << 4) | d3;          /* $5F8B */
+    for (int i = 0; i < HUD_BELTS; i++)
+        if (v < HUD_BELT_THRESHOLD[i]) return i;
+    return HUD_BELTS - 1;
+}
+
 /* the game's character codes: digits from $00, letters from $0B, space $0A */
 static int hudDigit(int n) { return HUD_CH_DIGIT0 + (n % 10); }
 static int hudBigDigit(int n) { return HUD_CH_BIGDIGIT0 + (n % 10); }
@@ -53,9 +77,10 @@ static void hudNumberRight(uint8_t* s, int row, int endCol, int value, int digit
 }
 
 /* $5BB2: build the two rows. p1/p2Human mirror $0050/$0051, timerBcd is $00DC,
- * level is $00D3, belt is the rank, wins are the two-player markers. */
+ * level is $00D3, wins are the two-player markers. The belt is not passed in: it is a
+ * function of the score, see hudBelt(). */
 static void hudCompose(uint8_t* s, int p1Human, int p2Human, int demo,
-                       int timerBcd, int level, int belt, int p1Score, int p2Score,
+                       int timerBcd, int level, int p1Score, int p2Score,
                        int p1Wins, int p2Wins, int blankTimer)
 {
     hudClear(s);
@@ -103,9 +128,10 @@ static void hudCompose(uint8_t* s, int p1Human, int p2Human, int demo,
     hudNumberRight(s, 0, HUD_P1_SCORE_END, p1Score, 6, 0);
     hudNumberRight(s, 0, HUD_P2_SCORE_END, p2Score, 6, 1);
 
-    /* $5FB8: the belt name */
-    {
-        const uint8_t* b = HUD_BELT[belt % HUD_BELTS];
+    /* $5F66/$5FB8: the belt name, and only outside a two-player game */
+    if (!(p1Human && p2Human)) {
+        /* $5F71: fighter 0's score if it is the person's, otherwise fighter 1's */
+        const uint8_t* b = HUD_BELT[hudBelt(p1Human ? p1Score : p2Score)];
         for (int i = 0; i < HUD_BELT_LEN; i++)
             s[HUD_COLS + HUD_BELT_COL + i] = b[i];
     }

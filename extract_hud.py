@@ -54,6 +54,8 @@ PIP_DATA = 0x324C
 PIP_ROWS = 0x1F
 BELT_TEXT = 0x5EFF          # $5FB8 reads from here and subtracts $36
 BELT_OFFSETS = 0x5F53
+BELT_THRESHOLD = 0x5F59     # $5F95 compares the score against these, in order
+BELT_COLOUR = 0x5F60        # $5FA5; zero means the name flashes off $14
 NBELTS = 6
 BELT_LEN = 12
 
@@ -216,6 +218,16 @@ def main():
         o = d[BELT_OFFSETS + r]
         belts.append([(d[BELT_TEXT + o + k] - 0x36) & 0xFF for k in range(BELT_LEN)])
     out.append("#define HUD_BELTS %d\n#define HUD_BELT_LEN %d\n" % (NBELTS, BELT_LEN))
+    out.append("/* $5F66: the belt is a function of the SCORE, not of anything won.\n"
+               " * $5F77 builds a byte from the score's second and third digits --\n"
+               " * ((F7 & $0F) << 4) | (F8 >> 4), with the top digit clamped to 9 -- and\n"
+               " * $5F95 walks these thresholds for the first one it is under. In two\n"
+               " * players there is no belt at all ($5F6A). */\n")
+    out.append("static const uint8_t HUD_BELT_THRESHOLD[HUD_BELTS]={%s};\n"
+               % ",".join("0x%02X" % d[BELT_THRESHOLD + i] for i in range(NBELTS)))
+    out.append("/* $5F60: the name's colour; 0 makes it flash from the clock ($5FAA) */\n")
+    out.append("static const uint8_t HUD_BELT_COLOUR[HUD_BELTS]={%s};\n"
+               % ",".join("0x%02X" % d[BELT_COLOUR + i] for i in range(NBELTS)))
     out.append("static const uint8_t HUD_BELT[HUD_BELTS][HUD_BELT_LEN]={\n%s};\n"
                % ",\n".join("  {" + ",".join("0x%02X" % c for c in b) + "}"
                             for b in belts))

@@ -14,6 +14,7 @@
 #include "ai.h"
 #include "generated/timing.h"
 #include "generated/pips.h"
+#include "hud.h"
 
 static unsigned rngstate = 0x1234;
 static unsigned rnd(void) { rngstate = rngstate * 1103515245u + 12345u; return (rngstate >> 16) & 0x7fff; }
@@ -438,6 +439,31 @@ int main(void)
         }
         check(bad == 0, "PIP_LIT agrees with the $44AE patterns for every score");
         check(PIP_LIT[0] == 0, "no points lights nothing");
+    }
+
+    /* $5F66: the belt is read off the score, not awarded for winning. Checked against
+     * the machine as well -- poking a score through the monitor and reading back $616A
+     * agreed on both sides of all five thresholds, ten cases out of ten. */
+    printf("the belt follows the score ($5F66/$5F95)\n");
+    {
+        static const int probe[10] = { 5900, 6000, 11900, 12000, 17900,
+                                       18000, 25900, 26000, 39900, 40000 };
+        static const int want[10]  = { 0, 1, 1, 2, 2, 3, 3, 4, 4, 5 };
+        int bad = 0;
+        for (int i = 0; i < 10; i++) {
+            int got = hudBelt(probe[i]);
+            if (got != want[i]) {
+                bad++;
+                printf("    %6d: belt %d, the machine said %d\n", probe[i], got, want[i]);
+            }
+        }
+        printf("    0 -> %d, 5900 -> %d, 6000 -> %d, 26000 -> %d, 40000 -> %d,"
+               " 999900 -> %d\n",
+               hudBelt(0), hudBelt(5900), hudBelt(6000), hudBelt(26000),
+               hudBelt(40000), hudBelt(999900));
+        check(bad == 0, "every threshold falls where the machine puts it");
+        check(hudBelt(0) == 0, "no score is a white belt");
+        check(hudBelt(999900) == HUD_BELTS - 1, "$5F82's clamp keeps a huge score black");
     }
 
     printf("$3F71 stays inside its limit\n");

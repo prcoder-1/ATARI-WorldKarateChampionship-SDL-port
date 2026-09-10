@@ -124,11 +124,13 @@ static int clockTick;      /* $6141: frames until the next second */
  * frame and end the round after eight traversals -- 13.4 s, always beating the 30 s
  * clock. What ends a bout is $2BA2: the clock reaching zero, or four points. */
 static int bg=0;
-static int dan=0;
 /* $00D3: the level, in BCD, counting BOUTS. $2D27 adds one and $2D2E's BCS drops the
  * store on carry, so it saturates at $99 instead of wrapping. The HUD shows it as
  * "L nn" ($5C2A). */
 static int level=0;
+/* $6150: bouts since the last bonus stage. $2D57 compares it with 8. */
+static int boutCount=0;
+#define SCENE_EVERY 8
 /* $2D09: the skill stops here and never falls back within a match */
 #define AI_SKILL_MAX 5
 static int bcdInc(int v)
@@ -311,9 +313,10 @@ static uint8_t hudCells[HUD_CELLS];
 static void drawHUD(void)
 {
     int demo = !(p1.isHuman || p2.isHuman);
-    /* $5C32/$5C3F: the two digits of $00D3 straight out, already BCD */
+    /* $5C32/$5C3F: the two digits of $00D3 straight out, already BCD. The belt is no
+     * longer passed: $5F66 derives it from the score. */
     hudCompose(hudCells, p1.isHuman, p2.isHuman, demo, roundClock,
-               level, dan, p1.score, p2.score,
+               level, p1.score, p2.score,
                p1.wins, p2.wins, gstate==G_TITLE);
     hudDraw(hudCells, LW, LH, setpx1);
     hudMarkers(p1.points, p2.points, p1.isHuman, p2.isHuman, LW, LH, setpx1);
@@ -348,6 +351,11 @@ static void newBout(void)
      * (level & 3) == 2, and stops at 5 -- it does not fall back. */
     level = bcdInc(level);
     if(aiSkill < AI_SKILL_MAX && (level & 3) == 2) aiSkill++;
+    /* $2D32 counts bouts in $6150; $2D57 sends the ninth to the bonus stage, and it is
+     * the END of that stage that advances the scene ($3043 -> $270B -> $438C: the next
+     * of seven, wrapping). This port has no bonus stage, so it advances the scene on the
+     * same bout count instead -- the timing the ROM gives it, without the stage. */
+    if(++boutCount > SCENE_EVERY){ boutCount=0; bg=(bg+1)%NSCENES; }
     /* $2D25/$2D3D: 30 seconds against the computer, 60 with two players */
     roundClock = p2.isCPU ? T_CLOCK_1P : T_CLOCK_2P;
     clockTick = T_CLOCK_TICK;
@@ -534,7 +542,7 @@ int main(int argc,char**argv)
                         /* $2C90: a new match clears the level and both scores, then
                          * $2C9F bumps the starting skill and wraps it at 5 -- so the
                          * difficulty each game begins at rotates 1,2,3,4,1,... */
-                        dan=0;bg=0;
+                        bg=0;boutCount=0;
                         level=0;
                         if(++aiSkill>=AI_SKILL_MAX) aiSkill=1;
                         p1.wins=p2.wins=0; p1.score=p2.score=0;
@@ -580,16 +588,16 @@ int main(int argc,char**argv)
                         break;
                     case G_ROUND_END:
                         if(--stateTimer<=0){
-                            /* The skill is NOT touched here: $2D09 raises it with the
-                             * level, once per bout, and never lowers it. What the ROM
-                             * uses to advance the scene and the belt is not established
-                             * -- $2BF5[$D3] only chooses the state in a two-player game
-                             * and $005C is written from $43B5/$4402/$4419 -- so that
-                             * stays on the port's own condition, a bout won by P1. */
-                            if(p1.points>=4 || (p1.wins>p2.wins && roundClock==0)){
-                                bg=(bg+1)%NSCENES; dan++;
-                                if(dan>=NSCENES){ gstate=G_MATCH_END; strcpy(banner,"BLACK BELT!"); }
-                                else newBout();
+                            /* Nothing is advanced here any more. The skill rises with
+                             * the level, once per bout ($2D09); the scene turns over on
+                             * the bout count in newBout(); and the belt is not a rank
+                             * that is awarded at all -- $5F66 reads it off the score.
+                             *
+                             * Ending the match at BLACK is the PORT'S choice, not the
+                             * ROM's: the game just keeps going and the scene cycles for
+                             * ever. What ends a one-player game there is not established. */
+                            if(hudBelt(p1.score) >= HUD_BELTS-1){
+                                gstate=G_MATCH_END; strcpy(banner,"BLACK BELT!");
                             } else newBout();
                         }
                         break;
