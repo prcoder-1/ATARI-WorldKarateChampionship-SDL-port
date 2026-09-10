@@ -15,6 +15,7 @@
 #include "generated/timing.h"
 #include "generated/pips.h"
 #include "hud.h"
+#include "hiscore.h"
 
 static unsigned rngstate = 0x1234;
 static unsigned rnd(void) { rngstate = rngstate * 1103515245u + 12345u; return (rngstate >> 16) & 0x7fff; }
@@ -464,6 +465,35 @@ int main(void)
         check(bad == 0, "every threshold falls where the machine puts it");
         check(hudBelt(0) == 0, "no score is a white belt");
         check(hudBelt(999900) == HUD_BELTS - 1, "$5F82's clamp keeps a huge score black");
+    }
+
+    /* $60B1/$60D3: the table keeps six entries and a candidate in slot 6, and sorts all
+     * seven by score -- high byte then low. A score that cannot beat the last entry is
+     * not taken ($5CDE's BCC). */
+    printf("the high-score table sorts and cuts off as $60B1 does\n");
+    {
+        static const uint8_t nm[HS_NAME_LEN] = { 0, 0, 0 };
+        hsReset();
+        check(hsSubmit(0, 0, nm) < 0, "an empty score never places");
+        int p1 = hsSubmit(5000, 0, nm);
+        int p2 = hsSubmit(40000, 5, nm);
+        int p3 = hsSubmit(12000, 2, nm);
+        printf("    5000 -> %d, 40000 -> %d, 12000 -> %d (0 is the top row)\n",
+               p1, p2, p3);
+        check(p1 == 0, "the first real score goes to the top");
+        check(p2 == 0, "a bigger one displaces it");
+        check(p3 == 1, "and one in between lands in the middle");
+        int ordered = 1;
+        for (int i = 1; i < HS_ENTRIES; i++)
+            if (hsScoreOf(&hsTable[i - 1]) < hsScoreOf(&hsTable[i])) ordered = 0;
+        printf("    the table now reads:");
+        for (int i = 0; i < HS_ENTRIES; i++) printf(" %d", hsScoreOf(&hsTable[i]));
+        printf("\n");
+        check(ordered, "the table is in descending order");
+        /* fill it, then check the cut-off */
+        for (int i = 0; i < HS_ENTRIES; i++) hsSubmit(50000 + i * 100, 5, nm);
+        check(hsSubmit(100, 0, nm) < 0, "a score below the last entry is turned away");
+        check(hsSubmit(90000, 5, nm) == 0, "and one above it is taken");
     }
 
     printf("$3F71 stays inside its limit\n");

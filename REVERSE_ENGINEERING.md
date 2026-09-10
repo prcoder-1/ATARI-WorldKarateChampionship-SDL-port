@@ -755,6 +755,65 @@ match at the black belt is the **port's** choice; the game itself just keeps goi
 **Starting a game** (`$3312`) reads `CONSOL`: **START** gives one player and **SELECT**
 two. Either way `$3337` sets `$50`/`$51`, turns the effects on and the music off.
 
+### The end of a match, and the high-score table
+
+**The match lasts only while fighter 0 keeps winning.** `$2A20` onwards, once a bout has
+been decided:
+
+```
+2A20: LDA $50 / ORA $51 / BEQ $2A42      ; the demo -> $5C8C as well
+2A26: LDA $50 / BEQ $2A31
+2A2A:   LDX $D1 / BNE $2A35 / JMP $2A45  ; $D1 is the winner; fighter 0 -> carry on
+2A35: TXA / EOR #$01 / STA $6168         ; the loser
+2A3B: LDA #$06 / STA $D0                 ; -> state 6, which is $5C8C
+2A45: JSR $2C42                          ; otherwise the match goes on
+```
+
+So one lost bout ends the match, the referee holds up **MATCH OVER**, and the high-score
+table follows. Before that, `$29FB..$2A18` counts the remaining seconds off the clock and
+into the score, 100 a second (`$6132 = 1`), redrawing the timer and the belt as it goes.
+
+**The table** is seven parallel arrays of seven slots -- six entries and, in slot 6, the
+score just finished -- bubble-sorted by score:
+
+```
+60D3: LDA $6220,X / CMP $6220,Y / BCC .. / BNE ..   ; the high byte
+60DD: LDA $6227,X / CMP $6227,Y                     ; then the low
+60E4: swap seven fields, seven bytes apart
+```
+
+| field | what |
+|---|---|
+| `$6220` | score, high BCD byte |
+| `$6227` | score, low |
+| `$622E` | the "this is the new one" marker `$5CED` looks for |
+| `$6235` | belt |
+| `$623C` `$6243` `$624A` | the three characters of the name |
+
+It is **drawn as text on the ground**, not on a screen of its own. `$5DBC` copies the
+HUD's character set from `$6400` into both lower character sets at code `$19`, so a game
+character code `c` becomes `c + $19` there; the stored text is ASCII and the conversion
+is `SBC #$1D`, which is the same two steps ($36 down to a game code, $19 back up).
+
+```
+5FE5: LDA $5FC8,Y / SBC #$1D / STA $08CA,Y   ; the header, row 4 column 10, 28 characters
+5FFC: $62 = $092A                            ; the rows, from row 6, column 10
+6017: LDA $D6 / ADC #$1A            -> +1    ; the position digit
+6022: $623C,X $6243,X $624A,X       -> +6..8 ; the name
+6045: JSR $5ED6                     -> +11   ; the belt, six characters
+6050: $6220,X $6227,X and a zero    -> +20   ; six score digits, leading zeros blanked
+```
+
+An entry with no score gets no belt either: `$6035` ORs the two score bytes and passes
+`$FF`, which `$5ED8`'s `CMP #$06 / BCS` turns into nothing drawn.
+
+Ported to `hiscore.h` with `extract_hiscore.py` for the text, layout and starting rows.
+**Not ported:** the original then lets the loser enter a name by walking his fighter along
+a row of letters on the ground (`$5CFF..$5D3C`); the port keeps the placeholder the table
+starts with. And the port's instruction screen -- the key bindings above the table for
+fifteen seconds before the demo -- is its own addition; the original has nothing to put
+there, having no keyboard controls to explain.
+
 **The attract mode is not a screen.** There is no title picture to leave: the game boots
 into a bout it plays against itself, and that state is simply `$50 = $51 = 0`. With both
 zero `$3D04` drives both fighters and `$51F9` reads no stick, the HUD prints DEMO in

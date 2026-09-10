@@ -53,8 +53,10 @@ make
 
 `F1` and `F2` stand in for the console keys the original reads from `CONSOL`.
 
-It starts the way the original does, with no title screen: the game plays a bout against
-itself, with the music on and the sound effects off, until you press one of them.
+It opens on the high-score table with these bindings above it, holds that for fifteen
+seconds, and then plays a bout against itself with the music on and the effects off,
+until you press one of them. Lose a match and the referee holds up MATCH OVER, your score
+goes to the table, and the demo comes back round.
 
 Run `make verify` to check both halves: the backgrounds against emulator captures, and
 the fighter state machine against its own invariants.

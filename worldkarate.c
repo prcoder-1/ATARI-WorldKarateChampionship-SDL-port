@@ -37,6 +37,7 @@
 #include "generated/signs.h"      /* the signs he holds up, captured the same way      */
 #include "hit_test.h"             /* $415D: whether a blow landed                      */
 #include "generated/popup.h"      /* the points a blow scores, put up on the ground    */
+#include "hiscore.h"              /* $6220..$624F: the table, and $60B1's sort         */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame -------
@@ -98,10 +99,15 @@ static void audioCB(void* u,Uint8* stream,int len){
 }
 
 /* ---------------- global game state ---------------- */
-/* There is no title screen: the game boots into the demo, which is a bout it plays
- * against itself ($50 and $51 both zero), and START or SELECT takes over from there. */
-enum { G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END };
-static int gstate=G_FIGHT;
+/* The game boots into the demo -- a bout it plays against itself, $50 and $51 both zero
+ * -- and START or SELECT takes over. The two screens either side of it are the port's
+ * arrangement of the original's pieces: G_INTRO shows the high-score table with the key
+ * bindings under it before the demo starts, and a lost match goes MATCH OVER -> the
+ * table -> back to the demo, which is the cycle $2A35/$2A42 set up ($D0 = 6 -> $5C8C). */
+enum { G_INTRO, G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END, G_HISCORE };
+static int gstate=G_INTRO;
+#define T_INTRO   (15*FPS)      /* the instruction screen, fifteen seconds */
+#define T_HISCORE (10*FPS)
 static int stateTimer=0;
 static Fighter p1,p2;
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
@@ -133,6 +139,9 @@ static int bg=0;
 static int level=0;
 /* $6150: bouts since the last bonus stage. $2D57 compares it with 8. */
 static int boutCount=0;
+/* $2A26: the match runs only while fighter 0 keeps winning. The moment it loses a bout
+ * $2A35 sets $6168 to the loser and $D0 to 6, which is the high-score screen. */
+static int boutLost=0;
 #define SCENE_EVERY 8
 /* $2D09: the skill stops here and never falls back within a match */
 #define AI_SKILL_MAX 5
@@ -334,6 +343,54 @@ static void drawText(int x,int y,const char* t,Col col)
 }
 static void drawTextC(int y,const char* t,Col col){ drawText((LW-(int)strlen(t)*8)/2,y,t,col); }
 
+/* The ground below the playfield is twelve ANTIC mode 4 rows ($62CC, LMS $0800). Its
+ * top comes from the points popup, which the ROM puts in row 4 and which was measured on
+ * screen at scanline POPUP_TOP. */
+#define GROUND_ROW_LINES 8
+#define GROUND_TOP  (POPUP_TOP - 4*GROUND_ROW_LINES)
+#define GROUND_LEFT POPUP_LEFT
+#define GROUND_CHAR (POPUP_PX_PER_CHAR*POPUP_CLOCKS_PER_PX)
+
+/* the same, from a string, centred across the forty columns */
+static void groundTextC(int row,const char* t,Col col)
+{
+    int n=(int)strlen(t);
+    int x=GROUND_LEFT+((40-n)/2)*GROUND_CHAR;
+    drawText(x, GROUND_TOP+row*GROUND_ROW_LINES, t, col);
+}
+
+static void groundText(int row,int col,const uint8_t* codes,int n,Col c)
+{
+    for(int i=0;i<n;i++)
+        gameChar(GROUND_LEFT+(col+i)*GROUND_CHAR, GROUND_TOP+row*GROUND_ROW_LINES,
+                 codes[i], c);
+}
+
+/* $5FE5 and $6013: the header at row 4 column 10, then one row per entry from row 6 --
+ * position, name, belt and a six-digit score with the leading zeros blanked but never
+ * the last ($607B/$6061). */
+static void drawHiScore(void)
+{
+    static const Col ink={SHAPE_COL_GI_WHITE};
+    groundText(HS_HEADER_ROW, HS_COL, HS_HEADER, HS_HEADER_LEN, ink);
+    for(int i=0;i<HS_ENTRIES;i++){
+        const HsRow* r=&hsTable[i];
+        int row=HS_ROW0+i;
+        uint8_t pos=(uint8_t)(i+1);                       /* $6017 */
+        groundText(row, HS_COL+HS_OFF_POS, &pos, 1, ink);
+        groundText(row, HS_COL+HS_OFF_NAME, r->name, HS_NAME_LEN, ink);
+        if(hsHasBelt(r))                                  /* $6035/$603D */
+            groundText(row, HS_COL+HS_OFF_BELT, HS_BELT[r->belt%6], HS_BELT_LEN, ink);
+        uint8_t dig[6]; int sc=hsScoreOf(r), div=100000, lead=1;
+        for(int k=0;k<6;k++,div/=10){
+            int v=(sc/div)%10;
+            if(v||k==5) lead=0;
+            dig[k]= lead ? HUD_CH_SPACE : (uint8_t)v;
+        }
+        groundText(row, HS_COL+HS_OFF_SCORE, dig, 6, ink);
+    }
+}
+
 /* ---------------- HUD ---------------- */
 static uint8_t hudCells[HUD_CELLS];
 
@@ -393,6 +450,7 @@ static void newBout(void)
     clockTick = T_CLOCK_TICK;
     tickCounter = 0;
     signShow("BEGIN",T_BEGIN);
+    boutLost=0;
     resetPositions();
     gstate=G_FIGHT;
    }
@@ -525,7 +583,7 @@ static void vblank(void)
             gstate=G_ROUND_END; stateTimer=T_BEGIN;
             /* the signs name the fighters by their gi, RED and WHITE */
             if(p1.points>p2.points){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
-            else if(p2.points>p1.points){ p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,""); }
+            else if(p2.points>p1.points){ p2.wins++; boutLost=1; signShow("RED",T_BEGIN); strcpy(banner,""); }
             else { signIndex=-1; strcpy(banner,"DRAW"); }
         }
     }
@@ -536,6 +594,7 @@ static void vblank(void)
 static void demoStart(void)
 {
     p1isCPU=1; p2isCPU=1; p2.isCPU=1;
+    boutLost=0;
     bg=0; boutCount=0; level=0; aiSkill=1;
     p1.wins=p2.wins=0; p1.score=p2.score=0;
     musicOn=1; sfxOn=0; musicPlay(&music);
@@ -555,11 +614,14 @@ int main(int argc,char**argv)
     SDL_AudioSpec want,have; SDL_zero(want);
     want.freq=SR; want.format=AUDIO_S16SYS; want.channels=1; want.samples=512; want.callback=audioCB;
     audio=SDL_OpenAudioDevice(NULL,0,&want,&have,0);
+    hsReset();
     musicInit(&music); pokeyOscInit(&pokeyOsc); sfxInit(&sfx); musSamples=0;
     musicPlay(&music);                 /* $26C0 */
     if(audio) SDL_PauseAudioDevice(audio,0);
 
+    /* the instruction screen first, then the demo */
     demoStart();
+    gstate=G_INTRO; stateTimer=T_INTRO;
 
     Uint32 last=SDL_GetTicks(); double acc=0; const double FT=1000.0/FPS;
     bool run=true;
@@ -623,7 +685,8 @@ int main(int argc,char**argv)
                                 p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,"");
                                 gstate=G_ROUND_END; stateTimer=T_BEGIN;
                             } else if(p2.points>=4){
-                                p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,"");
+                                p2.wins++; boutLost=1;
+                                signShow("RED",T_BEGIN); strcpy(banner,"");
                                 gstate=G_ROUND_END; stateTimer=T_BEGIN;
                             }
                             else { resetPositions(); gstate=G_FIGHT; }
@@ -631,27 +694,52 @@ int main(int argc,char**argv)
                         break;
                     case G_ROUND_END:
                         if(--stateTimer<=0){
-                            /* Nothing is advanced here any more. The skill rises with
-                             * the level, once per bout ($2D09); the scene turns over on
-                             * the bout count in newBout(); and the belt is not a rank
-                             * that is awarded at all -- $5F66 reads it off the score.
+                            /* Nothing is advanced here: the skill rises with the level
+                             * once per bout ($2D09), the scene turns over on the bout
+                             * count in newBout(), and the belt is read off the score.
                              *
-                             * Ending the match at BLACK is the PORT'S choice, not the
-                             * ROM's: the game just keeps going and the scene cycles for
-                             * ever. What ends a one-player game there is not established. */
-                            if(!p1isCPU && hudBelt(p1.score) >= HUD_BELTS-1){
-                                gstate=G_MATCH_END; strcpy(banner,"BLACK BELT!");
+                             * $2A26: the match lasts only while fighter 0 keeps winning.
+                             * Lose a bout and $D0 becomes 6 -- the referee holds up MATCH
+                             * OVER and the high-score table follows. */
+                            if(boutLost){
+                                gstate=G_MATCH_END; stateTimer=T_BEGIN;
+                                signShow("MATCH OVER",T_BEGIN); strcpy(banner,"");
                             } else newBout();
                         }
                         break;
-                    case G_MATCH_END: break;
+                    case G_MATCH_END:
+                        if(--stateTimer<=0){
+                            /* $5CC7..$5CEA: the finished score goes in as the candidate.
+                             * The original lets the loser walk his fighter along a row of
+                             * letters to enter a name ($5CFF..$5D3C); the port does not,
+                             * and fills in the placeholder the table starts with. */
+                            hsSubmit(p1isCPU?p2.score:p1.score,
+                                     hudBelt(p1isCPU?p2.score:p1.score),
+                                     HS_START[0].name);
+                            gstate=G_HISCORE; stateTimer=T_HISCORE;
+                        }
+                        break;
+                    case G_INTRO:
+                    case G_HISCORE:
+                        if(--stateTimer<=0) demoStart();
+                        break;
                 }
                 vblank();
             }
         }
 
         drawBackground();
-        {
+        if(gstate==G_INTRO || gstate==G_HISCORE){
+            drawHiScore();
+            /* the key bindings go on the ground too, in the game's own font, in the
+             * rows above the table's header -- over the scene they were unreadable */
+            if(gstate==G_INTRO){
+                static const Col c={SHAPE_COL_GI_WHITE};
+                groundTextC(0,"P1 WASD LSHIFT   P2 ARROWS RSHIFT",c);
+                groundTextC(1,"F1 ONE PLAYER    F2 TWO PLAYERS",c);
+                groundTextC(2,"M MUSIC  N EFFECTS  P PAUSE  ESC QUIT",c);
+            }
+        } else {
             drawReferee();
             drawSign();
             /* $3C2E composes the pair in an order set by $6114, the fighter an
@@ -665,7 +753,6 @@ int main(int argc,char**argv)
         if(gstate==G_POINT||gstate==G_ROUND_END||gstate==G_MATCH_END){
             drawTextC(100,banner,rgb(255,255,80));
             if(gstate==G_POINT) drawPopup();
-            if(gstate==G_MATCH_END) drawTextC(124,"PRESS SPACE",rgb(200,200,200));
         }
         if(paused) drawTextC(110,"PAUSED",rgb(255,255,255));
 

@@ -30,8 +30,9 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-CAPTURES = sys.argv[1:] or ["../extracted/signs", "../extracted/scenes",
-                            "../extracted/colour4", "../extracted/harvest2"]
+CAPTURES = sys.argv[1:] or ["../extracted/signs", "../extracted/endgame",
+                            "../extracted/scenes", "../extracted/colour4",
+                            "../extracted/harvest2"]
 BOARD = (211, 211, 211)
 INK = (4, 4, 4)
 IDX_BOARD, IDX_INK = 1, 2
@@ -56,6 +57,8 @@ LABELS = {
     "24272c9257c75e57261007a4e7a76e3a": "2000 BONUS",
     "3d5d0206de4adedb23d6da714a0b7bfa": "HALF POINT",
     "3331bdd760eaeb8c579806b8a5d4f89c": "1800 BONUS",
+    "a865880c0b1903ae262bc1a4232b1248": "2100 BONUS",
+    "45d7883d98fe93dcaa9ee2fec154c32c": "MATCH OVER",
 }
 
 
