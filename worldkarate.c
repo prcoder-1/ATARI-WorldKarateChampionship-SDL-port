@@ -101,7 +101,6 @@ enum { G_TITLE, G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END };
 static int gstate=G_TITLE;
 static int stateTimer=0;
 static Fighter p1,p2;
-static int roundTime;      /* $6154: referee traversals left in the round */
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
 static int updateParity;   /* $6115: which fighter is driven first this tick */
@@ -118,15 +117,27 @@ static Fighter* freezeWho;
 static int freezeMove;
 static int speedIndex=GAME_TICK_DEFAULT;  /* $619B: which divider is in use */
 static int clockTick;      /* $6141: frames until the next second */
-/* $6159/$615B/$615A/$615C/$615E: the referee's current action -- how far through it he
- * is, which way it counts, its step, which action, and whether one is running. Finishing
- * an action is what ticks the round counter down. */
-static int refProgress, refDir, refStep, refBusy;
-static void refereeBegin(void);
-static int roundIndex;     /* $615F */
-static int refTurns;       /* $6162: completed referee actions */
+/* The referee's action machinery ($6159/$615A/$615B/$615E, started by $58EF and stepped
+ * by $5807) is deliberately absent. $3972 gates all of it on $D0 == 5, a bonus stage
+ * this port does not have; in an ordinary bout ($D0 == 1) he never starts or steps an
+ * action, so his round counter $6154 never moves. The port used to run it every video
+ * frame and end the round after eight traversals -- 13.4 s, always beating the 30 s
+ * clock. What ends a bout is $2BA2: the clock reaching zero, or four points. */
 static int bg=0;
 static int dan=0;
+/* $00D3: the level, in BCD, counting BOUTS. $2D27 adds one and $2D2E's BCS drops the
+ * store on carry, so it saturates at $99 instead of wrapping. The HUD shows it as
+ * "L nn" ($5C2A). */
+static int level=0;
+/* $2D09: the skill stops here and never falls back within a match */
+#define AI_SKILL_MAX 5
+static int bcdInc(int v)
+{
+    int lo=(v&0x0F)+1, hi=(v>>4)&0x0F;
+    if(lo>9){ lo=0; hi++; }
+    if(hi>9) return v;                 /* $2D2E: the carry is not stored */
+    return (hi<<4)|lo;
+}
 static char banner[64]="";
 /* $615C picks one of the referee's three actions; what the player actually reads is the
  * sign he holds up beside him. The bitmaps are captured (generated/signs.h) and named
@@ -300,11 +311,12 @@ static uint8_t hudCells[HUD_CELLS];
 static void drawHUD(void)
 {
     int demo = !(p1.isHuman || p2.isHuman);
+    /* $5C32/$5C3F: the two digits of $00D3 straight out, already BCD */
     hudCompose(hudCells, p1.isHuman, p2.isHuman, demo, roundClock,
-               ((dan+1)/10)*16 + ((dan+1)%10), dan, p1.score, p2.score,
+               level, dan, p1.score, p2.score,
                p1.wins, p2.wins, gstate==G_TITLE);
     hudDraw(hudCells, LW, LH, setpx1);
-    hudMarkers(p1.points, p2.points, LW, LH, setpx1);
+    hudMarkers(p1.points, p2.points, p1.isHuman, p2.isHuman, LW, LH, setpx1);
 }
 
 /* ---------------- round / match flow ---------------- */
@@ -331,48 +343,19 @@ static void resetPositions(void)
 static void newBout(void)
 {
     p1.points=0; p2.points=0;
-    /* $2F5F: the round length is a count of referee traversals, not seconds */
-    roundTime=ROUND_TRAVERSALS[roundIndex%3];
+    /* $2D27: the level counts BOUTS, in BCD, and saturates rather than wrapping
+     * ($2D2E's BCS skips the store). $2D09: the skill rises with it, when
+     * (level & 3) == 2, and stops at 5 -- it does not fall back. */
+    level = bcdInc(level);
+    if(aiSkill < AI_SKILL_MAX && (level & 3) == 2) aiSkill++;
     /* $2D25/$2D3D: 30 seconds against the computer, 60 with two players */
     roundClock = p2.isCPU ? T_CLOCK_1P : T_CLOCK_2P;
     clockTick = T_CLOCK_TICK;
     tickCounter = 0;
-    refBusy=0; refTurns=0; refereeBegin();
     signShow("BEGIN",T_BEGIN);
     resetPositions();
     gstate=G_FIGHT;
    }
-
-/* $58EF: begin one of the referee's three signalling actions. Which one comes from
- * $58A1, by round number and a random draw; its speed from $58AD; which way its progress
- * counter runs from $5885. He does not move: this is a timer, not a walk. */
-static void refereeBegin(void)
-{
-    int i = (roundIndex*4 + (int)(rnd()&3)) % 12;
-    /* REF_ACTION[i] picks which of his three signals this is; they differ in the
-     * markers and the sign, not in his figure, of which only one pose was captured. */
-    refStep   = REF_STEP[i];
-    refDir    = REF_SIDE[refTurns % 12] & 1;
-    refProgress = refDir ? REF_START_DOWN : REF_START_UP;
-    refBusy = 1;
-}
-
-/* $5807: advance the current action. Returns 1 when one completes, which is what $5834
- * uses to take one off the round counter. */
-static int refereeStep(void)
-{
-    if(!refBusy){ refereeBegin(); return 0; }
-    if(refDir){
-        refProgress -= refStep;
-        if(refProgress >= REF_END_LOW) return 0;
-    } else {
-        refProgress += refStep;
-        if(refProgress < REF_END_HIGH) return 0;
-    }
-    refBusy = 0;
-    refTurns++;
-    return 1;
-}
 
 /* $2FFA/$3004: a scoring blow freezes play and forces the loser into move 17 or 18,
  * chosen by whether the blow came from the front or from behind. */
@@ -386,8 +369,10 @@ static void award(Fighter* a, const HitResult* h)
     a->points += h->hit;                          /* $4508 */
     if(a->points > HIT_POINTS_MAX) a->points = HIT_POINTS_MAX;   /* $450B */
     a->score += bcd(h->score) * 100;              /* $4550, in BCD */
-    int total=ROUND_TRAVERSALS[roundIndex%3];
-    int elapsed=(total-roundTime)*0x28/(total?total:1);
+    /* $311E's time bonus keys off $00DF, the frame counter the bout spins on; the port
+     * has no such counter, so the elapsed fraction of the round clock stands in. */
+    int total = p2.isCPU ? T_CLOCK_1P : T_CLOCK_2P;
+    int elapsed = (bcd(total) - bcd(roundClock)) * 0x28 / (bcd(total) ? bcd(total) : 1);
     lastBonus=score_time_bonus(elapsed)*100;
     /* the game's own wording, off its signs. $613F names the announcement the ROM puts
      * up, but what it indexes has not been established, so the sign is still chosen by
@@ -485,24 +470,25 @@ static void fightTick(const Uint8* keys)
 static void vblank(void)
 {
     if(gstate==G_FIGHT){
-        /* $3988: a BCD decrement once a second */
+        /* $3988: a BCD decrement once a second. $3981 holds it while fighter 0 is in
+         * move $1C -- the bow -- so the ceremony does not eat the round. */
         if(--clockTick<=0){
             clockTick=T_CLOCK_TICK;
-            if(roundClock){
+            if(roundClock && p1.move!=MOVE_BOW){
                 int lo=roundClock&0x0F, hi=roundClock>>4;
                 if(lo) lo--; else { lo=9; if(hi) hi--; }
                 roundClock=(hi<<4)|lo;
             }
         }
-        if((refereeStep() && --roundTime<=0) || roundClock==0){
+        /* $2BA2: the bout is over when the clock reaches zero, or when either fighter
+         * has four points. Nothing else ends it -- the referee does not time it. */
+        if(roundClock==0){
             gstate=G_ROUND_END; stateTimer=T_BEGIN;
             /* the signs name the fighters by their gi, RED and WHITE */
             if(p1.points>p2.points){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
             else if(p2.points>p1.points){ p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,""); }
             else { signIndex=-1; strcpy(banner,"DRAW"); }
         }
-        if(p1.points>=4){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
-        if(p2.points>=4){ p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,""); gstate=G_ROUND_END; stateTimer=T_BEGIN; }
     }
     if(signTimer>0 && --signTimer==0) signIndex=-1;
     soundFrame();
@@ -545,7 +531,12 @@ int main(int argc,char**argv)
                 if(kc==SDLK_F1||kc==SDLK_F2||kc==SDLK_SPACE){
                     if(gstate==G_TITLE){
                         int twoPlayer = (kc==SDLK_F2);
-                        dan=0;bg=0;aiSkill=1;roundIndex=0;
+                        /* $2C90: a new match clears the level and both scores, then
+                         * $2C9F bumps the starting skill and wraps it at 5 -- so the
+                         * difficulty each game begins at rotates 1,2,3,4,1,... */
+                        dan=0;bg=0;
+                        level=0;
+                        if(++aiSkill>=AI_SKILL_MAX) aiSkill=1;
                         p1.wins=p2.wins=0; p1.score=p2.score=0;
                         p2isCPU=!twoPlayer; p2.isCPU=p2isCPU;
                         /* $3337: both players get $50/$51, effects on, music off */
@@ -576,16 +567,27 @@ int main(int argc,char**argv)
                             fgtUpdate(freezeWho, freezeMove, rnd);
                         if(--stateTimer<=0){
                             freezeWho=NULL;
-                            if(p1.points>=4||p2.points>=4){ gstate=G_ROUND_END; stateTimer=T_BEGIN; }
+                            /* $2BA2: four points ends the bout */
+                            if(p1.points>=4){
+                                p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,"");
+                                gstate=G_ROUND_END; stateTimer=T_BEGIN;
+                            } else if(p2.points>=4){
+                                p2.wins++; signShow("RED",T_BEGIN); strcpy(banner,"");
+                                gstate=G_ROUND_END; stateTimer=T_BEGIN;
+                            }
                             else { resetPositions(); gstate=G_FIGHT; }
                         }
                         break;
                     case G_ROUND_END:
                         if(--stateTimer<=0){
-                            if(p1.wins>=1 && (p1.points>=4 || roundTime<=0)){
+                            /* The skill is NOT touched here: $2D09 raises it with the
+                             * level, once per bout, and never lowers it. What the ROM
+                             * uses to advance the scene and the belt is not established
+                             * -- $2BF5[$D3] only chooses the state in a two-player game
+                             * and $005C is written from $43B5/$4402/$4419 -- so that
+                             * stays on the port's own condition, a bout won by P1. */
+                            if(p1.points>=4 || (p1.wins>p2.wins && roundClock==0)){
                                 bg=(bg+1)%NSCENES; dan++;
-                                /* $2C99: the skill level rises and wraps back to 1 */
-                                if(++aiSkill>=5) aiSkill=1;
                                 if(dan>=NSCENES){ gstate=G_MATCH_END; strcpy(banner,"BLACK BELT!"); }
                                 else newBout();
                             } else newBout();

@@ -50,6 +50,7 @@
  * MOVE_FRAME_START[m+1] is always in range. */
 #define MOVE_HIT       0x11   /* 17: struck from the front                     */
 #define MOVE_FALL      0x12   /* 18: struck from behind                        */
+#define MOVE_BOW       0x1C   /* 28: the ceremony; $3981 stops the clock during it */
 
 typedef struct {
     int x;          /* $E0,y  left edge, arena units, 8-bit         */

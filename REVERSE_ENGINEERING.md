@@ -212,8 +212,8 @@ where the fighter is free to act. Ported to `ai.h`; the tables are generated int
 `generated/frames.h`.
 
 Its inputs are the gap `$6136`, the situation code `$6138`, the opponent's current
-move, and the skill level `$F6` (0..5, raised as the player advances and wrapped back
-to 1 at `$2C99`). The decision tree:
+move, and the skill level `$F6` (0..5; it rises with the level and stops at 5 within a
+match — only a new match rewinds it, `$2C9F`). The decision tree:
 
 | Step | Test | Outcome |
 |------|------|---------|
@@ -230,6 +230,35 @@ to 1 at `$2C99`). The decision tree:
 | `$3DE8` | `AI_SIT_A[$6138] != 0` | `AI_FAR` if gap ≥ 8 else `AI_NEAR`, random column of 12 |
 | `$3E08` | gap ≥ 10 | `AI_MID`, random column of 12 |
 | `$3E1A` | otherwise | `AI_BY_RANGE[AI_ROW[gap] + random column]`, the column count coming from `AI_COLS[skill]` |
+
+### There is no block: defence is evasion, and it is gated by skill
+
+The game has no guard pose. What the CPU does instead is at `$3D96`:
+
+```
+3D96: LDA $D20A / CMP $3E4E,X / BCC $3DDB   ; X = skill; failing this it does nothing
+3DA3: LDX $6138 / LDA $3E6A,X / BNE $3DAE / JMP $3DF0
+3DAE: LDX $6128 / LDY $6181,X / LDX #$08 / JSR $3F71
+3DB9: LDA $3E72,Y / BEQ $3DC4 / LDA $3E9C,X   ; AI_REPLY1
+3DC4: LDA $3E94,X                              ; AI_REPLY0
+```
+
+`AI_MOVE_FLAG` (`$3E72`) sorts the opponent's move into three kinds: `$FF` defer, `1`
+(crouch and the low attacks 12, 14, 34) and `0` (everything else attacking). Against a
+low attack the reply comes from `AI_REPLY1` = {1, 1, 16, 27, 1, 16, 1, 12} — **jump over
+it** (move 1) or step back (27). Against a high one it comes from `AI_REPLY0` =
+{5, 5, 27, 16, 20, 20, 6, 30} — **crouch under it** (5), step back (27, 30) or roll away
+(6). Moves 26/27/29/30/33/34 are the approach and retreat steps; their velocities in
+`FRAME_VELX` are what identify them.
+
+The whole branch is behind one gate: `RANDOM < AI_RND_CLOSE[skill]` sends the CPU to the
+idle path instead. `AI_RND_CLOSE` = {224, 208, 96, 64, 32, 16}, so a skill-1 opponent
+takes it about a fifth of the time and a skill-5 one nearly always. `verify_fighter.c`
+measures exactly that: over 4000 trials against an attacking opponent the CPU acts at all
+in 21% of them at skill 0 and 99% at skill 5, and the share that are a defensive reply
+runs 15% → 94%.
+
+That is why the skill wrapping back to 1 was so visible: the computer stopped defending.
 
 `$3F71` is the random-in-range helper: it draws `RANDOM & $1F`, and if that is not below
 the limit ANDs it with `$0F` and with `VCOUNT` and tries again, looping until it fits.
@@ -517,12 +546,52 @@ code at `$2F5F..$3029` simply spins on it, so its comparisons are the durations:
 | freeze after a point, and after time runs out | `$80` = 128 | `$2FEA`, `$3017` |
 | both fighters' starting x | `$54` | `$2F7C` |
 
-**The round clock is the referee.** `$6154` does not count seconds — it counts referee
-traversals. The referee's x (`$6159`) starts at `$28` or `$DC` and steps by `$615A`
-(`$58AD`, normally 2) every frame until it passes `$F0` or drops below `$0A`, and each
-turn decrements `$6154` (`$5834`). `$2F3A`, indexed by the round number `$615F`, gives
-the traversals per round: **8, 15, 20** — so roughly 13, 25 and 33 seconds. Generated
-into `generated/timing.h`.
+### What ends a bout, and what does not
+
+An earlier version of this section said "the round clock is the referee" — that `$6154`
+counts his traversals and those end the round. That is true of one game state and not of
+the one an ordinary bout runs in, and taking it for the general case made every round in
+the port last 13 seconds instead of 30.
+
+`$3972: LDA $D0 / CMP #$05 / BNE $397B` — the vertical blank calls the referee's step
+routine `$5807` **only when `$D0 == 5`**. That state is a bonus stage, reached from
+`$2D5E`. In an ordinary bout (`$D0 == 1`) `$5807` never runs, so `$58EF` never starts an
+action, `$6159` never moves and `$6154` never decrements. The referee stands there and
+holds up signs; he does not time anything.
+
+What ends an ordinary bout is `$2BA2`, called from the top of the fight loop:
+
+```
+2BA2: LDA $DC / BEQ $2BCA          ; the clock reached zero
+2BBB: LDA $D9 / CMP #$04 / BCS ..  ; or a fighter reached four points
+2BC1: LDA $DA / CMP #$04 / BCS ..
+2BCA: LDA #$03 / STA $D0 / SEC
+```
+
+so: **the clock, or four points.** The clock `$00DC` is BCD, one second per `$3C` frames
+at `$3988`, started at `$30` (30 s) for one player or `$60` (60) for two
+(`$2D25`/`$2D3D`), and `$3981` holds it while fighter 0 is in move `$1C`, the bow.
+`$5C5C` blanks the timer digits altogether in states 4 and 5.
+
+`$6154`, `$2F3A` (8, 15, 20 traversals) and the referee's `$58A1`/`$58AD`/`$5885` tables
+belong to the bonus stage, which this port does not have, and are no longer generated.
+
+### The level and the AI's skill
+
+```
+2C90: LDA #$00 / STA $D3          ; a new match: level 0, and $F7..$FC cleared
+2C9F: INC $F6 / CMP #$05 / BCC    ; the starting skill, wrapped to 1 at 5 ($2CB1)
+2D27: LDA $D3 / SED / ADC #$01    ; the level counts BOUTS, BCD, and $2D2E's BCS
+2D30: STA $D3                     ;   drops the store on carry, so it saturates at $99
+2D09: LDA $F6 / CMP #$05 / BCS    ; within a match:
+2D0F: LDA $D3 / AND #$03 / CMP #$02 / BNE
+2D17: INC $F6                     ; skill +1 when (level & 3) == 2, and it stops at 5
+```
+
+The level is what the HUD shows as "L nn" (`$5C2A`). Within a match the skill only ever
+rises. The port used to raise it just when player 1 won a round and **wrap it 5 → 1**,
+which dropped the CPU back into its most passive setting every fifth win — see below for
+why that matters so much.
 
 ## The HUD (recovered pixel-exactly)
 
@@ -547,16 +616,47 @@ dark or lit, and lighting them is how the score is shown -- the upper pair fills
 left with full points, the lower dot lights on its own for a half point outstanding. The
 port used to draw two dots side by side and no third one at all.
 
-Everything about them is measured off the screen by `extract_pips.py`, since they are
-P/M objects rather than characters: the dot's shape (8 colour clocks by 5 scanlines,
-corners cut), the three offsets `(0,0) (8,0) (8,6)`, the two origins (clock 88 and clock
-280, scanline 17) and both colours. Across 897 captures every cluster agrees, and the
-extractor re-renders each one over its own capture and refuses to emit unless every
-pixel matches (`make verify-pips`).
+The geometry is measured off the screen by `extract_pips.py`, since they are P/M objects
+rather than characters: the dot's shape (8 colour clocks by 5 scanlines, corners cut),
+the three offsets `(0,0) (8,0) (8,6)`, the two origins (clock 88 and clock 280, scanline
+17) and both colours. Across 897 captures every cluster agrees, and the extractor
+re-renders each one over its own capture and refuses to emit unless every pixel matches
+(`make verify-pips`).
 
-The lit combinations the demo produces are exactly the four the scheme predicts: none,
-the right upper dot alone, both upper dots, and the lower dot alone. No frame lights the
-left upper dot on its own, which is what fixes the fill order.
+**Which of them light is not calculated — it is a lookup.** `$4514` takes the fighter's
+points (`$00D9,y`, clamped to 5 at `$450B`), indexes `$44A7` to find an eleven-scanline
+pattern in `$44AE`, and copies it into the player strip:
+
+```
+4514: LDA $44A5,Y / STA $63 / LDA #$00 / STA $62   ; $0400 or $0600
+451D: LDX $D9,Y / LDA $44A7,X / TAX                ; $44A7 = [0,11,22,33,44,55]
+4523: LDY #$19
+4525: LDA $44AE,X / STA ($62),Y / INX / INY / CPY #$24 / BCC
+```
+
+| points | `$44AE` pattern | lit |
+|---|---|---|
+| 0 | `00 00 00 00 00 00 00 00 00 00 00` | none |
+| 1 | `00 00 00 00 00 00 06 0F 0F 0F 06` | lower |
+| 2 | `06 0F 0F 0F 06 00 00 00 00 00 00` | upper right |
+| 3 | `06 0F 0F 0F 06 00 06 0F 0F 0F 06` | upper right, lower |
+| 4 | `66 FF FF FF 66 00 00 00 00 00 00` | both upper |
+| 5 | `66 FF FF FF 66 00 06 0F 0F 0F 06` | both upper, lower |
+
+The port used to derive the lighting from `points/2` and `points & 1`. That agrees with
+the table for all six values — but it was a guess that happened to be right, and the game
+has the answer. `extract_pips.py` now reduces each pattern to one bit per dot, checking
+as it goes that each measured dot falls wholly inside or wholly outside the pattern.
+
+`$3892` hides the markers when **both** fighters are joystick-controlled — the players
+are parked at HPOS 0 and the HUD shows the win markers (`$5BFF`) instead. They appear
+only in a one-player game or the demo.
+
+**The score digits** are three BCD bytes per fighter, `$F7..$F9` and `$FA..$FC`, drawn as
+six characters ending at columns 5 and 39 (`$4570`). Only the middle byte is added to
+(`$455E`), so the last two digits are always `00`. `$45A1`/`$45B2` blank the leading
+zeros of **both** fields, whether or not the second fighter is a person — the port drew
+the second only for a human, so in a one-player game the computer's score never appeared.
 
 **Layout**, from the HUD routine at `$5BB2..$5C8B`:
 
@@ -576,8 +676,8 @@ Belt names live at `$5EFF`, offsets in `$5F53`, stored with `$36` added to each 
 
 **The clock** is `$00DC`: a BCD value decremented by one every `$3C` = 60 frames at
 `$3988`, started at `$30` (30 seconds) for one player or `$60` (60) for two
-(`$2D25`/`$2D3D`). Note this is a *different* counter from `$6154`, the referee
-traversals that actually end the bout.
+(`$2D25`/`$2D3D`). In an ordinary bout it is the *only* thing that times the round —
+`$6154` belongs to the bonus stage, see above.
 
 **Starting a game** (`$3312`) reads `CONSOL`: **START** gives one player and **SELECT**
 two. Either way `$3337` sets `$50`/`$51`, turns the effects on and the music off.

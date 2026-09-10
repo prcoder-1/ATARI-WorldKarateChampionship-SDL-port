@@ -12,6 +12,8 @@
 
 #include "fighter.h"
 #include "ai.h"
+#include "generated/timing.h"
+#include "generated/pips.h"
 
 static unsigned rngstate = 0x1234;
 static unsigned rnd(void) { rngstate = rngstate * 1103515245u + 12345u; return (rngstate >> 16) & 0x7fff; }
@@ -343,6 +345,99 @@ int main(void)
                distinct, attacksChosen);
         check(attacksChosen > 0, "the CPU does attack");
         check(distinct >= 8, "the tables produce a varied move set");
+    }
+
+    /* $3D96: the whole defensive branch is behind a RANDOM gate whose threshold is
+     * AI_RND_CLOSE[skill]. There is no block pose in this game -- defence is evasion:
+     * $3DC4's AI_REPLY0 crouches under a high attack or steps back (5/6/27/30), and
+     * $3DB9's AI_REPLY1 jumps over a low one (1/16/27/12). The port used to reset the
+     * skill from 5 back to 1, which dropped the CPU into its most passive setting. */
+    printf("the CPU's defensive branch opens with skill ($3D96)\n");
+    {
+        int replied[6], decided[6];
+        memset(replied, 0, sizeof replied); memset(decided, 0, sizeof decided);
+        int defensive = 0, monotone = 1;
+        Fighter a, b;
+        for (int skill = 0; skill <= 5; skill++) {
+            for (int trial = 0; trial < 4000; trial++) {
+                reset(&a, 0x50, 0); reset(&b, 0x60, 1);
+                a.isHuman = 0; b.isHuman = 1;
+                /* an opponent mid-attack, close enough for $3D46 to let it through */
+                b.move = AM_ATK_F;
+                b.frame = MOVE_FRAME_START[AM_ATK_F];
+                int m = aiChooseMove(&a, &b, skill, rnd);
+                if (m < 0) continue;
+                decided[skill]++;
+                for (int i = 0; i < 8; i++)
+                    if (m == AI_REPLY0[i] || m == AI_REPLY1[i]) { replied[skill]++; break; }
+            }
+        }
+        printf("    skill: gate -> acts at all / of those, a defensive reply\n");
+        for (int skill = 0; skill <= 5; skill++) {
+            printf("      %d: AI_RND_CLOSE %3d -> acts %2d%% of the time, replies %2d%%"
+                   " of all trials\n",
+                   skill, AI_RND_CLOSE[skill], 100 * decided[skill] / 4000,
+                   100 * replied[skill] / 4000);
+            if (replied[skill]) defensive++;
+        }
+        for (int skill = 1; skill <= 5; skill++)
+            if (replied[skill] + 40 < replied[skill-1]) monotone = 0;
+        check(defensive > 0, "the CPU does choose a defensive reply");
+        check(monotone, "and does so more often as the skill rises");
+        check(AI_RND_CLOSE[5] < AI_RND_CLOSE[1],
+              "$3E4E: the gate opens wider at higher skill");
+    }
+
+    /* $2BA2 ends an ordinary bout on the clock or on four points, and on nothing else.
+     * $3988 takes one BCD second off $00DC every $3C frames. The port used to end the
+     * round after eight of the referee's traversals instead -- 13.4 s. */
+    printf("the round runs its full clock ($3988/$2BA2)\n");
+    {
+        for (int two = 0; two < 2; two++) {
+            int clk = two ? T_CLOCK_2P : T_CLOCK_1P, tick = T_CLOCK_TICK, frames = 0;
+            while (clk && frames < 60 * 200) {
+                frames++;
+                if (--tick <= 0) {
+                    tick = T_CLOCK_TICK;
+                    int lo = clk & 0x0F, hi = clk >> 4;
+                    if (lo) lo--; else { lo = 9; if (hi) hi--; }
+                    clk = (hi << 4) | lo;
+                }
+            }
+            int want = two ? 60 : 30;
+            printf("    %s: $%02X counts out in %d frames = %d s\n",
+                   two ? "two players" : "one player ", two ? T_CLOCK_2P : T_CLOCK_1P,
+                   frames, frames / 60);
+            check(frames / 60 == want, two ? "a two-player round lasts 60 seconds"
+                                           : "a one-player round lasts 30 seconds");
+        }
+    }
+
+    /* $4514: which ippon dots light is a lookup in $44AE by the fighter's points, not a
+     * calculation. extract_pips.py reduces those patterns to PIP_LIT; this checks the
+     * reduction against the patterns the header also carries. */
+    printf("the ippon markers follow the ROM's own table ($44A7/$44AE)\n");
+    {
+        int bad = 0;
+        for (int pts = 0; pts <= PIP_POINTS_MAX; pts++)
+            for (int i = 0; i < PIP_COUNT; i++) {
+                int on = 0;
+                for (int y = 0; y < PIP_H; y++)
+                    for (int x = 0; x < PIP_W; x++)
+                        if (PIP_PX[y * PIP_W + x]
+                            && (PIP_PATTERN[pts][PIP_DY[i] + y]
+                                >> (7 - (PIP_DX[i] + x) / 2)) & 1) on = 1;
+                if (on != ((PIP_LIT[pts] >> i) & 1)) bad++;
+            }
+        for (int pts = 0; pts <= PIP_POINTS_MAX; pts++) {
+            char what[48]; what[0] = 0;
+            if (PIP_LIT[pts] & 1) strcat(what, "upper left ");
+            if (PIP_LIT[pts] & 2) strcat(what, "upper right ");
+            if (PIP_LIT[pts] & 4) strcat(what, "lower");
+            printf("    %d points: %s\n", pts, what[0] ? what : "none");
+        }
+        check(bad == 0, "PIP_LIT agrees with the $44AE patterns for every score");
+        check(PIP_LIT[0] == 0, "no points lights nothing");
     }
 
     printf("$3F71 stays inside its limit\n");

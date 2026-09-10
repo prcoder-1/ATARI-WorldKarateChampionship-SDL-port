@@ -96,8 +96,12 @@ static void hudCompose(uint8_t* s, int p1Human, int p2Human, int demo,
         s[HUD_RIGHT_COL + 2] = (uint8_t)(hudDigit(level & 0x0F) | HUD_CH_COLOUR_ALT);
     }
 
+    /* $4570: both score fields are six digits and both are drawn, whether or not the
+     * second fighter is a person -- $45A1/$45B2 blank the leading zeros of each. The
+     * port used to draw the second only for a human, so in a one-player game the
+     * computer's score never appeared. */
     hudNumberRight(s, 0, HUD_P1_SCORE_END, p1Score, 6, 0);
-    if (p2Human) hudNumberRight(s, 0, HUD_P2_SCORE_END, p2Score, 6, 1);
+    hudNumberRight(s, 0, HUD_P2_SCORE_END, p2Score, 6, 1);
 
     /* $5FB8: the belt name */
     {
@@ -134,31 +138,42 @@ static void hudDraw(const uint8_t* s, int screenW, int screenH,
     }
 }
 
-/* $31E1: the ippon markers -- Players drawn over the HUD, three per fighter.
+/* $31E1/$4514: the ippon markers -- Players drawn over the HUD, three per fighter.
  *
  * Not a row of two, which is what this used to draw: **two Points on the upper line and
- * one Half-Point below**, the lower dot under the right-hand of the pair. The upper pair
- * fills right to left as full points are scored and the lower dot lights on its own for
- * a half point outstanding. `points` counts half-points, so two of them make one Point.
+ * one Half-Point below**, the lower dot under the right-hand of the pair.
  *
- * The dot, its three positions, both players' origins and the two colours are all
- * measured off the screen by extract_pips.py, which re-renders them over 897 captures
- * and refuses to emit unless every pixel matches.
+ * Which of them light is not calculated. $4514 takes the fighter's points ($00D9,y,
+ * clamped to 5 at $450B), indexes $44A7 to find an eleven-scanline pattern in $44AE and
+ * copies it into the player strip. extract_pips.py reads those six patterns out of a
+ * dump and reduces each to one bit per dot, which is PIP_LIT. The port used to derive
+ * the lighting from points/2 and points&1 -- that agrees with the table for all six
+ * values, but it was a guess and the game has the answer.
+ *
+ * $3892: when BOTH fighters are joystick-controlled the markers are parked at HPOS 0,
+ * i.e. hidden, and the HUD shows the win markers instead ($5BFF). They only appear in a
+ * one-player game or the demo.
+ *
+ * The dot, its three positions, both players' origins and the two colours are measured
+ * off the screen by extract_pips.py, which re-renders them over 897 captures and refuses
+ * to emit unless every pixel matches.
  */
-static void hudMarkers(int p1Points, int p2Points, int screenW, int screenH,
+static void hudMarkers(int p1Points, int p2Points, int p1Human, int p2Human,
+                       int screenW, int screenH,
                        void (*setpx)(int, int, int, int, int))
 {
     static const int origin[2] = { PIP_ORIGIN_P1, PIP_ORIGIN_P2 };
     static const uint8_t colour[2][3] = { { PIP_COL_DARK }, { PIP_COL_LIT } };
     const int pts[2] = { p1Points, p2Points };
 
+    if (p1Human && p2Human) return;                  /* $3892 */
+
     for (int s = 0; s < 2; s++) {
-        int full = pts[s] / 2, half = pts[s] & 1;
+        int n = pts[s];
+        if (n < 0) n = 0;
+        if (n > PIP_POINTS_MAX) n = PIP_POINTS_MAX;  /* $450B */
         for (int i = 0; i < PIP_COUNT; i++) {
-            int lit;
-            if (i == PIP_HALF_INDEX) lit = half;
-            else                     lit = (full >= PIP_COUNT - 1 - i);
-            const uint8_t* c = colour[lit ? 1 : 0];
+            const uint8_t* c = colour[(PIP_LIT[n] >> i) & 1];
             for (int y = 0; y < PIP_H; y++) {
                 int sy = PIP_TOP + PIP_DY[i] + y;
                 if (sy < 0 || sy >= screenH) continue;

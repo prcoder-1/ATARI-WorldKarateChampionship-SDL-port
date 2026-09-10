@@ -8,14 +8,25 @@ dot is drawn either dark or lit, and lighting is what records the score -- the t
 dots fill right to left as full points are scored, and the lower one lights on its own
 for a half point outstanding.
 
-They are Player/Missile objects drawn over the HUD, not characters, so like the referee
-and his signs they are read off the screen. Everything below is measured: the dot's
-shape, the three positions, the two players' origins and both colours. Nothing is typed
-in.
+They are Player/Missile objects drawn over the HUD, not characters, so the geometry is
+read off the screen: the dot's shape, the three positions, the two players' origins and
+both colours. Nothing is typed in.
 
-The port used to draw two dots side by side and no third one at all.
+**Which dots light is not computed, it is a lookup.** $4514 takes the fighter's points
+($00D9,y, 0..5), indexes $44A7 to get a start in $44AE, and copies eleven bytes -- eleven
+scanlines of one Player, eight pixels wide -- into the player strip at offset $19:
 
-Usage: python3 extract_pips.py [capture_dir ...]
+    4514: LDA $44A5,Y / STA $63 / LDA #$00 / STA $62   ; $0400 or $0600
+    451D: LDX $D9,Y / LDA $44A7,X / TAX
+    4523: LDY #$19
+    4525: LDA $44AE,X / STA ($62),Y / INX / INY / CPY #$24 / BCC
+
+So this reads that table out of the dump too, rather than reconstructing the lighting
+from the score. The port's old reconstruction (full = points/2, half = points & 1) does
+agree with the table for all six values -- but it was a guess that happened to be right,
+and the game has the answer.
+
+Usage: python3 extract_pips.py [capture_dir ...] [--dump RAM.bin]
 """
 import collections
 import glob
@@ -32,6 +43,28 @@ DARK = (104, 27, 35)
 LIT = (250, 204, 144)
 BAND_TOP, BAND_BOT = 8, 40          # the HUD band, well clear of the playfield
 OUT = "generated/pips.h"
+
+# $44A7: points -> where that pattern starts in $44AE. $44AE: eleven bytes per pattern.
+POINT_INDEX = 0x44A7
+POINT_BITMAP = 0x44AE
+POINT_ROWS = 11
+POINT_MAX = 5                       # $450B clamps $00D9,y here
+DUMPS = ("../extracted/ram_true_64k.bin", "../extracted/fightdumps/dump_00.bin")
+
+
+def load_point_table():
+    """The six lit-dot patterns, read out of a RAM dump."""
+    for path in DUMPS:
+        try:
+            d = open(path, "rb").read()
+        except OSError:
+            continue
+        if len(d) <= POINT_BITMAP + 66:
+            continue
+        starts = [d[POINT_INDEX + p] for p in range(POINT_MAX + 1)]
+        rows = [[d[POINT_BITMAP + s + r] for r in range(POINT_ROWS)] for s in starts]
+        return os.path.basename(path), starts, rows
+    return None, None, None
 
 
 def frame(path):
@@ -103,6 +136,12 @@ def main():
         print("the markers are not always in the same place (%d layouts)" % len(layouts))
         return 1
 
+    src, starts, patterns = load_point_table()
+    if patterns is None:
+        print("no RAM dump holding $44AE; refusing to emit")
+        return 1
+    print("point patterns from %s, $44A7 starts %s" % (src, starts))
+
     W, H = 8, 5
     grid = np.frombuffer(next(iter(shapes)), bool).reshape(H, W)
     p1 = layout[:3]
@@ -144,6 +183,36 @@ def main():
         print("refusing to emit")
         return 1
 
+    # Turn each ROM pattern into "which of the three measured dots is lit". A Player is
+    # eight bits wide and drawn double, so one ROM bit spans two colour clocks: the dot
+    # measured at offset dx clocks covers ROM bits dx/2 .. dx/2+3. A dot is either wholly
+    # present in the pattern or wholly absent, and that is checked here -- if it were
+    # not, the measured geometry and the ROM table would disagree.
+    CLOCKS_PER_BIT = 2
+    lit_masks = []
+    for pts, rows in enumerate(patterns):
+        mask = 0
+        for i, (dx, dy) in enumerate(offs):
+            on = off = 0
+            for r in range(H):
+                for x in range(W):
+                    if not grid[r, x]:
+                        continue
+                    bit = (rows[dy + r] >> (7 - (dx + x) // CLOCKS_PER_BIT)) & 1
+                    on += bit
+                    off += 1 - bit
+            if on and off:
+                print("points %d dot %d: the ROM pattern and the measured dot disagree "
+                      "(%d bits on, %d off); refusing to emit" % (pts, i, on, off))
+                return 1
+            if on:
+                mask |= 1 << i
+        lit_masks.append(mask)
+    print("$44AE -> which dots light, by points:")
+    for pts, m in enumerate(lit_masks):
+        print("   %d: %s" % (pts, "".join("*" if m & (1 << i) else "-"
+                                          for i in range(len(offs)))))
+
     out = []
     out.append("/* pips.h - the HUD's ippon markers, captured from the screen.\n"
                " *\n"
@@ -156,6 +225,19 @@ def main():
                " * measured off the screen like the referee and his signs.\n"
                " * GENERATED FILE - do not edit; re-run extract_pips.py instead. */\n")
     out.append("#ifndef PIPS_H\n#define PIPS_H\n#include <stdint.h>\n")
+    out.append("/* $450B clamps a fighter's points here */\n")
+    out.append("#define PIP_POINTS_MAX %d\n" % POINT_MAX)
+    out.append("/* $4514: which dots light is a lookup, not a calculation -- $44A7 picks\n"
+               " * an eleven-scanline pattern out of $44AE by the fighter's points. These\n"
+               " * are those six patterns, reduced to one bit per dot. */\n")
+    out.append("static const uint8_t PIP_LIT[%d]={%s};\n"
+               % (POINT_MAX + 1, ",".join("0x%02X" % m for m in lit_masks)))
+    out.append("/* and the patterns themselves, as the ROM holds them */\n")
+    out.append("static const uint8_t PIP_PATTERN[%d][%d]={\n"
+               % (POINT_MAX + 1, POINT_ROWS))
+    for rows in patterns:
+        out.append("  {%s},\n" % ",".join("0x%02X" % b for b in rows))
+    out.append("};\n")
     out.append("#define PIP_W %d\n#define PIP_H %d\n" % (W, H))
     out.append("#define PIP_COUNT %d\n" % len(offs))
     out.append("#define PIP_ORIGIN_P1 %d\n#define PIP_ORIGIN_P2 %d\n#define PIP_TOP %d\n"

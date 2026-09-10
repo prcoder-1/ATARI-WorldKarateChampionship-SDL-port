@@ -81,7 +81,14 @@ $5834  DEC $6154 / INC $6162 / $615E = 0
 ```
 
 So a round is a number of his actions, not of anything geometric, and `$58D1` gives his
-objects fixed positions that never change. Measured over 187 captured frames he is in
+objects fixed positions that never change.
+
+**All of that belongs to one game state only.** `$3972: LDA $D0 / CMP #$05 / BNE $397B` --
+the vertical blank calls `$5807` only when `$D0 == 5`, a bonus stage. In an ordinary bout
+(`$D0 == 1`) none of it runs: no action starts, `$6159` never moves, `$6154` never
+decrements, and the round is timed by the clock `$00DC` alone (`$2BA2`). Taking the
+paragraph above for the general case is what made every round in the port last 13 seconds
+instead of 30, and the tables behind it are no longer generated. Measured over 187 captured frames he is in
 exactly the same place in 181 of them -- the other six are the announcement sign, which
 the isolator picked up instead of him.
 

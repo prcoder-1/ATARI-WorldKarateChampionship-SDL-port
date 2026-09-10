@@ -3,10 +3,13 @@
  * $00DF is a frame counter bumped by the vertical blank; the bout code at
  * $2F5F..$3029 spins on it, so these comparisons ARE the durations.
  *
- * The round length is not a clock: $6154 counts REFEREE TRAVERSALS. The
- * referee's x ($6159) starts at $28 or $DC and steps by $615A each frame
- * ($58AD, normally 2) until it passes $F0 or falls under $0A, and each turn
- * decrements $6154 ($5834). $2F3A gives the number of traversals per round.
+ * An ordinary bout ($00D0 == 1) is timed by the CLOCK and nothing else:
+ * $2BA2 ends it when $00DC reaches zero or a fighter reaches four points.
+ * The referee's traversal counter $6154 and the tables that drive it belong
+ * to $00D0 == 5, a bonus stage this port does not have -- $3972 gates his
+ * whole step routine on that state -- so they are not emitted here. An
+ * earlier version of this file did emit them, and the port ended every
+ * round after eight of his traversals, 13.4 s instead of 30.
  * GENERATED FILE - do not edit. */
 #ifndef TIMING_H
 #define TIMING_H
@@ -19,21 +22,6 @@
 #define T_FREEZE  0x80
 /* $2F7C: both fighters are placed at this x when a bout starts */
 #define T_START_X 0x54
-/* $2F3A, indexed by the round number $615F */
-static const uint8_t ROUND_TRAVERSALS[3]={8,15,20};
-/* The referee does NOT move. $6159 is how far through one of his signalling
- * actions he is: $58EF starts one, setting $6159 to $28 or $DC and $615A to a
- * step from $58AD, and $5807 walks it to $F0 or $0A. Reaching the end is what
- * decrements the round counter $6154 ($5834), so a round is a number of his
- * actions, not of anything geometric. $58A1 picks which of three actions, by
- * round number and a random draw. */
-static const uint8_t REF_ACTION[12]={0,1,2,2,0,1,2,0,0,1,2,2};   /* $58A1 */
-static const uint8_t REF_STEP[12]={2,2,2,2,2,2,2,2,2,1,2,3};     /* $58AD */
-static const uint8_t REF_SIDE[12]={1,1,0,1,0,0,1,0,1,1,0,1};     /* $5885 */
-#define REF_END_LOW   0x0A
-#define REF_END_HIGH  0xF0
-#define REF_START_UP   0x28
-#define REF_START_DOWN 0xDC
 /* $3BF9: the main loop only takes a game tick once the vertical blank has
  * counted more than this many frames into $6121, so the fighters advance at
  * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.
@@ -47,4 +35,9 @@ static const uint8_t GAME_TICK_DIVIDER[4]={5,4,6,7};
 #define T_CLOCK_1P 0x30
 #define T_CLOCK_2P 0x60
 #define T_CLOCK_TICK 0x3C
+/* $2D27: the level counts bouts, in BCD, saturating rather than wrapping.
+ * $2D09: the AI's skill rises with it, when (level & 3) == 2, and stops at
+ * 5. $2C9F: a new match bumps the starting skill and wraps it at 5. */
+#define LEVEL_SKILL_STEP 3
+#define LEVEL_SKILL_PHASE 2
 #endif

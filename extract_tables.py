@@ -135,10 +135,13 @@ def emit_timing(d):
              " * $00DF is a frame counter bumped by the vertical blank; the bout code at\n"
              " * $2F5F..$3029 spins on it, so these comparisons ARE the durations.\n"
              " *\n"
-             " * The round length is not a clock: $6154 counts REFEREE TRAVERSALS. The\n"
-             " * referee's x ($6159) starts at $28 or $DC and steps by $615A each frame\n"
-             " * ($58AD, normally 2) until it passes $F0 or falls under $0A, and each turn\n"
-             " * decrements $6154 ($5834). $2F3A gives the number of traversals per round.\n"
+             " * An ordinary bout ($00D0 == 1) is timed by the CLOCK and nothing else:\n"
+             " * $2BA2 ends it when $00DC reaches zero or a fighter reaches four points.\n"
+             " * The referee's traversal counter $6154 and the tables that drive it belong\n"
+             " * to $00D0 == 5, a bonus stage this port does not have -- $3972 gates his\n"
+             " * whole step routine on that state -- so they are not emitted here. An\n"
+             " * earlier version of this file did emit them, and the port ended every\n"
+             " * round after eight of his traversals, 13.4 s instead of 30.\n"
              " * GENERATED FILE - do not edit. */\n")
     t.append("#ifndef TIMING_H\n#define TIMING_H\n#include <stdint.h>\n")
     t.append("/* $2F9A: hold before the fighters are shown */\n")
@@ -149,23 +152,6 @@ def emit_timing(d):
     t.append("#define T_FREEZE  0x%02X\n" % 0x80)
     t.append("/* $2F7C: both fighters are placed at this x when a bout starts */\n")
     t.append("#define T_START_X 0x%02X\n" % 0x54)
-    t.append("/* $2F3A, indexed by the round number $615F */\n")
-    t.append("static const uint8_t ROUND_TRAVERSALS[3]={%s};\n"
-             % ",".join(str(d[0x2F3A + k]) for k in range(3)))
-    t.append("/* The referee does NOT move. $6159 is how far through one of his signalling\n"
-             " * actions he is: $58EF starts one, setting $6159 to $28 or $DC and $615A to a\n"
-             " * step from $58AD, and $5807 walks it to $F0 or $0A. Reaching the end is what\n"
-             " * decrements the round counter $6154 ($5834), so a round is a number of his\n"
-             " * actions, not of anything geometric. $58A1 picks which of three actions, by\n"
-             " * round number and a random draw. */\n")
-    t.append("static const uint8_t REF_ACTION[12]={%s};   /* $58A1 */\n"
-             % ",".join(str(d[0x58A1 + k]) for k in range(12)))
-    t.append("static const uint8_t REF_STEP[12]={%s};     /* $58AD */\n"
-             % ",".join(str(d[0x58AD + k]) for k in range(12)))
-    t.append("static const uint8_t REF_SIDE[12]={%s};     /* $5885 */\n"
-             % ",".join(str(d[0x5885 + k]) for k in range(12)))
-    t.append("#define REF_END_LOW   0x0A\n#define REF_END_HIGH  0xF0\n")
-    t.append("#define REF_START_UP   0x28\n#define REF_START_DOWN 0xDC\n")
     t.append("/* $3BF9: the main loop only takes a game tick once the vertical blank has\n"
              " * counted more than this many frames into $6121, so the fighters advance at\n"
              " * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.\n"
@@ -179,10 +165,14 @@ def emit_timing(d):
              " * by $3988, and started at $30 for one player or $60 for two. */\n")
     t.append("#define T_CLOCK_1P 0x%02X\n#define T_CLOCK_2P 0x%02X\n#define T_CLOCK_TICK 0x%02X\n"
              % (0x30, 0x60, 0x3C))
+    t.append("/* $2D27: the level counts bouts, in BCD, saturating rather than wrapping.\n"
+             " * $2D09: the AI's skill rises with it, when (level & 3) == 2, and stops at\n"
+             " * 5. $2C9F: a new match bumps the starting skill and wraps it at 5. */\n")
+    t.append("#define LEVEL_SKILL_STEP 3\n#define LEVEL_SKILL_PHASE 2\n")
     t.append("#endif\n")
     open(TIMING_OUT, "w").write("".join(t))
-    print("wrote %s: rounds %s traversals, referee step %d"
-          % (TIMING_OUT, [d[0x2F3A + k] for k in range(3)], d[0x58AD]))
+    print("wrote %s: clock $30/$60 BCD = 30/60 s, tick divider %s"
+          % (TIMING_OUT, [d[0x3BF5 + k] for k in range(4)]))
 
 
 if __name__ == "__main__":
