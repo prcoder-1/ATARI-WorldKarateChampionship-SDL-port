@@ -14,9 +14,21 @@
  * The score is BCD in two bytes with the two low digits always 00 ($455E only adds to
  * the middle byte), which is why the comparison needs no third byte.
  *
- * Not implemented, and it is the interesting half: the original lets the loser enter a
- * name by walking his fighter along a row of letters on the ground ($5CFF..$5D3C). The
- * port fills the name in and says so.
+ * $5DE0 is the name entry, and it is here too. The loser picks three characters, one at
+ * a time: the stick steps through them and the fire button takes each. $616C is the one
+ * being shown, $23..$3E in the lower character set's codes -- space, A to Z, and the
+ * dash the table starts with -- and it blinks off $14.
+ *
+ *   5E1C: LDA $616D / BNE $5E29      ; TRIG is 1 when released -> step
+ *   5E21:   LDA $616E / BNE $5E7F    ; released last pass, pressed now -> take it
+ *   5E2E: LDA $616B / CMP #$05 / BCC ; $616B is bumped every video frame ($3956)
+ *   5E3A: AND #$04 -> DEC $616C      ; left, active low; under $23 wraps to $3E
+ *   5E50: AND #$08 -> INC $616C      ; right; over $3E wraps to $23
+ *   5E98: INC $6170 / CMP #$03       ; three characters and it is done
+ *   5E0F: LDA $6171 / CMP #$0A       ; $6171 is bumped every 256 frames ($394E)
+ *
+ * What the port does not carry over is the walk: $5CFF puts the loser's fighter at the
+ * left of the arena and $5D62/$5DA4 animate him. Here the keys do the picking.
  */
 #ifndef HISCORE_TABLE_H
 #define HISCORE_TABLE_H
@@ -84,6 +96,49 @@ static int hsSubmit(int score, int belt, const uint8_t* name)
         if (hsTable[i].hi == want.hi && hsTable[i].lo == want.lo
             && !memcmp(hsTable[i].name, want.name, HS_NAME_LEN)) return i;
     return -1;
+}
+
+/* $5DE0: the state of one name entry */
+#define HS_CH_FIRST  (0x23 - 0x19)   /* space */
+#define HS_CH_LAST   (0x3E - 0x19)   /* the dash the table starts with */
+#define HS_CH_START  (0x24 - 0x19)   /* A */
+#define HS_NAME_REPEAT  5            /* $5E2E, on $616B */
+#define HS_NAME_TIMEOUT (10 * 256)   /* $5E0F, on $6171 */
+
+typedef struct { int ch, pos, held, repeat, timer; uint8_t buf[HS_NAME_LEN]; } HsName;
+
+static void hsNameBegin(HsName* n, const uint8_t* start)
+{
+    memcpy(n->buf, start, HS_NAME_LEN);
+    n->ch = HS_CH_START;                     /* $5DF4 */
+    n->pos = n->held = n->repeat = n->timer = 0;
+}
+
+/* One pass, once per video frame. `stick` is the Atari direction nibble, active low;
+ * `fire` is true while the button is down. Returns 1 when the entry is finished. */
+static int hsNameTick(HsName* n, int stick, int fire)
+{
+    if (++n->timer >= HS_NAME_TIMEOUT) return 1;      /* $5E0F */
+    n->repeat++;                                       /* $3956 */
+
+    if (!fire) {                                       /* $5E1C: TRIG released */
+        n->held = 1;                                   /* $5E29 */
+        if (n->repeat >= HS_NAME_REPEAT) {             /* $5E2E */
+            n->repeat = 0;
+            if (!(stick & 0x04)) {                     /* $5E3A: left */
+                if (--n->ch < HS_CH_FIRST) n->ch = HS_CH_LAST;
+            } else if (!(stick & 0x08)) {              /* $5E50: right */
+                if (++n->ch > HS_CH_LAST) n->ch = HS_CH_FIRST;
+            }
+        }
+    } else if (n->held) {                              /* $5E21: pressed on the edge */
+        n->held = 0;                                   /* $5E7F */
+        n->buf[n->pos] = (uint8_t)n->ch;
+        n->ch = HS_CH_START;
+        n->repeat = 0; n->timer = 0;
+        if (++n->pos >= HS_NAME_LEN) return 1;         /* $5E98 */
+    }
+    return 0;
 }
 
 static int hsScoreOf(const HsRow* r)

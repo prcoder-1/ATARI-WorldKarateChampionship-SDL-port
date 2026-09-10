@@ -496,6 +496,59 @@ int main(void)
         check(hsSubmit(90000, 5, nm) == 0, "and one above it is taken");
     }
 
+    /* $5DE0: the loser picks three characters, the stick stepping and the button
+     * taking. The range is $23..$3E in the lower character set's codes -- space, A to Z,
+     * and the dash -- and it wraps at both ends ($5E4B/$5E61). */
+    printf("the name entry steps, wraps and takes ($5DE0)\n");
+    {
+        HsName n;
+        static const uint8_t dashes[HS_NAME_LEN] = { HS_CH_LAST, HS_CH_LAST, HS_CH_LAST };
+        const int LEFT = 0x0F & ~0x04, RIGHT = 0x0F & ~0x08, CENTRE = 0x0F;
+
+        hsNameBegin(&n, dashes);
+        check(n.ch == HS_CH_START, "it starts on A");
+
+        /* hold left long enough to step once, and check it wraps below space */
+        int steps = 0;
+        hsNameBegin(&n, dashes);
+        while (n.ch != HS_CH_FIRST && steps < 200) { hsNameTick(&n, LEFT, 0); steps++; }
+        printf("    left from A reaches space in %d frames\n", steps);
+        check(n.ch == HS_CH_FIRST, "left walks down to space");
+        for (int i = 0; i < HS_NAME_REPEAT; i++) hsNameTick(&n, LEFT, 0);
+        check(n.ch == HS_CH_LAST, "and one more wraps to the dash");
+        for (int i = 0; i < HS_NAME_REPEAT; i++) hsNameTick(&n, RIGHT, 0);
+        check(n.ch == HS_CH_FIRST, "right wraps back the other way");
+
+        /* three characters, each taken on the button's edge */
+        hsNameBegin(&n, dashes);
+        int done = 0;
+        for (int c = 0; c < HS_NAME_LEN; c++) {
+            for (int i = 0; i < HS_NAME_REPEAT * (c + 1); i++)
+                if (hsNameTick(&n, RIGHT, 0)) done = 1;      /* pick */
+            if (hsNameTick(&n, CENTRE, 1)) done = 1;         /* take */
+        }
+        printf("    entered %d %d %d, finished %s\n",
+               n.buf[0], n.buf[1], n.buf[2], done ? "yes" : "no");
+        check(done, "three characters ends the entry");
+        check(n.buf[0] == HS_CH_START + 1 && n.buf[1] == HS_CH_START + 2
+              && n.buf[2] == HS_CH_START + 3, "each one is the letter that was showing");
+
+        /* holding the button does not take a second one: $5E21 needs the edge */
+        hsNameBegin(&n, dashes);
+        hsNameTick(&n, CENTRE, 0);
+        hsNameTick(&n, CENTRE, 1);
+        int was = n.pos;
+        for (int i = 0; i < 20; i++) hsNameTick(&n, CENTRE, 1);
+        check(n.pos == was, "$616E: holding the button takes only one");
+
+        /* and it gives up on its own */
+        hsNameBegin(&n, dashes);
+        int frames = 0;
+        while (!hsNameTick(&n, CENTRE, 0) && frames < HS_NAME_TIMEOUT * 2) frames++;
+        printf("    left alone it gives up after %d frames\n", frames + 1);
+        check(frames + 1 == HS_NAME_TIMEOUT, "$6171 ends it after ten of its ticks");
+    }
+
     printf("$3F71 stays inside its limit\n");
     {
         int bad = 0, lo = 99, hi = -1;

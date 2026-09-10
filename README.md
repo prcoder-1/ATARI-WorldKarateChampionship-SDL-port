@@ -55,8 +55,9 @@ make
 
 It opens on the high-score table with these bindings above it, holds that for fifteen
 seconds, and then plays a bout against itself with the music on and the effects off,
-until you press one of them. Lose a match and the referee holds up MATCH OVER, your score
-goes to the table, and the demo comes back round.
+until you press one of them. Lose a match and the referee holds up MATCH OVER; if your
+score makes the table you put three characters in with the movement keys -- left and
+right pick a letter, fire takes it -- and then the demo comes back round.
 
 Run `make verify` to check both halves: the backgrounds against emulator captures, and
 the fighter state machine against its own invariants.

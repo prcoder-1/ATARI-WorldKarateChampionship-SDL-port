@@ -104,14 +104,15 @@ static void audioCB(void* u,Uint8* stream,int len){
  * arrangement of the original's pieces: G_INTRO shows the high-score table with the key
  * bindings under it before the demo starts, and a lost match goes MATCH OVER -> the
  * table -> back to the demo, which is the cycle $2A35/$2A42 set up ($D0 = 6 -> $5C8C). */
-enum { G_INTRO, G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END, G_HISCORE };
+enum { G_INTRO, G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END, G_NAME, G_HISCORE };
 static int gstate=G_INTRO;
-#define T_INTRO   (15*FPS)      /* the instruction screen, fifteen seconds */
+#define T_INTRO   (30*FPS)      /* the instruction screen, thirty seconds */
 #define T_HISCORE (10*FPS)
 static int stateTimer=0;
 static Fighter p1,p2;
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
+static unsigned frameCount; /* $0014: the clock the blink comes off ($5E68) */
 static int updateParity;   /* $6115: which fighter is driven first this tick */
 /* $00D8 freezes play after a blow. Two things follow, and the port did neither:
  *   - $51F1 runs the state machine for the fighter named by $D1 ONLY, and skips the
@@ -142,6 +143,11 @@ static int boutCount=0;
 /* $2A26: the match runs only while fighter 0 keeps winning. The moment it loses a bout
  * $2A35 sets $6168 to the loser and $D0 to 6, which is the high-score screen. */
 static int boutLost=0;
+/* $5DE0: which row of the table the loser is putting a name into, and the entry
+ * itself (hiscore.h). In the original the stick picks the letters and the button
+ * takes them; here the movement keys do the picking. */
+static int nameRow=-1;
+static HsName nameEntry;
 #define SCENE_EVERY 8
 /* $2D09: the skill stops here and never falls back within a match */
 #define AI_SKILL_MAX 5
@@ -378,7 +384,15 @@ static void drawHiScore(void)
         int row=HS_ROW0+i;
         uint8_t pos=(uint8_t)(i+1);                       /* $6017 */
         groundText(row, HS_COL+HS_OFF_POS, &pos, 1, ink);
-        groundText(row, HS_COL+HS_OFF_NAME, r->name, HS_NAME_LEN, ink);
+        if(i==nameRow){
+            /* $5E66: the characters already taken, then the one being chosen, blinking
+             * off $14 -- blank for eight frames in every thirty-two. */
+            groundText(row, HS_COL+HS_OFF_NAME, nameEntry.buf, HS_NAME_LEN, ink);
+            uint8_t cur = (frameCount & 0x18) ? (uint8_t)nameEntry.ch : HUD_CH_SPACE;
+            if(nameEntry.pos < HS_NAME_LEN)
+                groundText(row, HS_COL+HS_OFF_NAME+nameEntry.pos, &cur, 1, ink);
+        } else
+            groundText(row, HS_COL+HS_OFF_NAME, r->name, HS_NAME_LEN, ink);
         if(hsHasBelt(r))                                  /* $6035/$603D */
             groundText(row, HS_COL+HS_OFF_BELT, HS_BELT[r->belt%6], HS_BELT_LEN, ink);
         uint8_t dig[6]; int sc=hsScoreOf(r), div=100000, lead=1;
@@ -669,6 +683,7 @@ int main(int argc,char**argv)
         while(acc>=FT){
             acc-=FT;
             if(!paused){
+                frameCount++;                 /* $394A: INC $14 every vertical blank */
                 switch(gstate){
                     case G_FIGHT:
                         if(gameTickDue(0)) fightTick(SDL_GetKeyboardState(NULL));
@@ -709,16 +724,33 @@ int main(int argc,char**argv)
                         break;
                     case G_MATCH_END:
                         if(--stateTimer<=0){
-                            /* $5CC7..$5CEA: the finished score goes in as the candidate.
-                             * The original lets the loser walk his fighter along a row of
-                             * letters to enter a name ($5CFF..$5D3C); the port does not,
-                             * and fills in the placeholder the table starts with. */
-                            hsSubmit(p1isCPU?p2.score:p1.score,
-                                     hudBelt(p1isCPU?p2.score:p1.score),
-                                     HS_START[0].name);
-                            gstate=G_HISCORE; stateTimer=T_HISCORE;
+                            /* $5CC7..$5CEA: the finished score goes in as the candidate,
+                             * and if it places, $5DE0 lets the loser put a name in the
+                             * row it took. */
+                            int sc = p1isCPU ? p2.score : p1.score;
+                            nameRow = hsSubmit(sc, hudBelt(sc), HS_START[0].name);
+                            if(nameRow >= 0 && !p1isCPU){
+                                hsNameBegin(&nameEntry, HS_START[0].name);
+                                gstate=G_NAME;
+                            } else {
+                                nameRow=-1;
+                                gstate=G_HISCORE; stateTimer=T_HISCORE;
+                            }
                         }
                         break;
+                    case G_NAME: {
+                        /* the loser is always fighter 0 -- that is what ended the
+                         * match ($2A26) -- so these are always player 1's keys */
+                        Stick st = readKeys(SDL_GetKeyboardState(NULL), 0);
+                        if(hsNameTick(&nameEntry, st.stick, st.fire)){
+                            /* $5EA5: the three characters are read back into the entry */
+                            /* $5EA5: the three characters go into the entry */
+                            if(nameRow>=0)
+                                memcpy(hsTable[nameRow].name,nameEntry.buf,HS_NAME_LEN);
+                            nameRow=-1;
+                            gstate=G_HISCORE; stateTimer=T_HISCORE;
+                        }
+                        break; }
                     case G_INTRO:
                     case G_HISCORE:
                         if(--stateTimer<=0) demoStart();
@@ -729,15 +761,22 @@ int main(int argc,char**argv)
         }
 
         drawBackground();
-        if(gstate==G_INTRO || gstate==G_HISCORE){
+        if(gstate==G_INTRO || gstate==G_HISCORE || gstate==G_NAME){
             drawHiScore();
             /* the key bindings go on the ground too, in the game's own font, in the
              * rows above the table's header -- over the scene they were unreadable */
+            /* The original needs no prompt -- the stick and the button are the only
+             * controls it has. The port's mapping is its own, so it says so. */
+            if(gstate==G_NAME){
+                static const Col c={SHAPE_COL_GI_WHITE};
+                groundTextC(1,"LEFT RIGHT PICK A LETTER",c);
+                groundTextC(2,"FIRE TAKES IT",c);
+            }
             if(gstate==G_INTRO){
                 static const Col c={SHAPE_COL_GI_WHITE};
-                groundTextC(0,"P1 WASD LSHIFT   P2 ARROWS RSHIFT",c);
-                groundTextC(1,"F1 ONE PLAYER    F2 TWO PLAYERS",c);
-                groundTextC(2,"M MUSIC  N EFFECTS  P PAUSE  ESC QUIT",c);
+                groundTextC(0,"F1 ONE PLAYER    F2 TWO PLAYERS",c);
+                groundTextC(1,"M MUSIC  N EFFECTS  P PAUSE  ESC QUIT",c);
+                groundTextC(2,"P1 WASD LSHIFT   P2 ARROWS RSHIFT",c);
             }
         } else {
             drawReferee();

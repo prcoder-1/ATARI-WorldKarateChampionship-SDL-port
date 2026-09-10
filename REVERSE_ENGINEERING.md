@@ -807,12 +807,38 @@ is `SBC #$1D`, which is the same two steps ($36 down to a game code, $19 back up
 An entry with no score gets no belt either: `$6035` ORs the two score bytes and passes
 `$FF`, which `$5ED8`'s `CMP #$06 / BCS` turns into nothing drawn.
 
+### Entering a name (`$5DE0`)
+
+The loser then puts three characters into the row his score took. One at a time: the
+stick steps through the characters and the fire button takes each.
+
+```
+5DF4: LDA #$24 / STA $616C          ; the one being shown; it starts on A
+5E0F: LDA $6171 / CMP #$0A          ; $6171 is bumped every 256 frames ($394E)
+5E1C: LDA $616D / BNE $5E29         ; $616D is TRIG, 1 when released
+5E21:   LDA $616E / BNE $5E7F       ;   released last pass, pressed now -> take it
+5E2E: LDA $616B / CMP #$05 / BCC .. ; $616B is bumped every video frame ($3956)
+5E3A: AND #$04 -> DEC $616C         ; left, active low; under $23 it wraps to $3E
+5E50: AND #$08 -> INC $616C         ; right; over $3E it wraps to $23
+5E66: LDA $14 / AND #$18            ; and it blinks -- blank eight frames in thirty-two
+5E98: INC $6170 / CMP #$03          ; three characters and it is done
+5EA5: the three are read back into $623C/$6243/$624A
+```
+
+`$616C` is in the lower character set's codes, `$23..$3E`: **space, A to Z, and the dash
+the table starts with**. Ported to `hiscore.h`, timings and all -- the step every fifth
+frame, the take on the button's edge, and the give-up after ten of `$6171`'s ticks, which
+is 2560 frames. `verify_fighter.c` drives it and checks each of those.
+
+Two things the port does differently, and both are because it has a keyboard rather than
+a stick: the movement keys do the stepping, and it says so on screen. The original also
+walks the loser's fighter to the left of the arena and animates him through it
+(`$5CFF`, `$5D62`, `$5DA4`); the port leaves the fighters where they are.
+
 Ported to `hiscore.h` with `extract_hiscore.py` for the text, layout and starting rows.
-**Not ported:** the original then lets the loser enter a name by walking his fighter along
-a row of letters on the ground (`$5CFF..$5D3C`); the port keeps the placeholder the table
-starts with. And the port's instruction screen -- the key bindings above the table for
-fifteen seconds before the demo -- is its own addition; the original has nothing to put
-there, having no keyboard controls to explain.
+The port's instruction screen -- the start keys, the toggles and the player controls
+above the table for thirty seconds before the demo -- is its own addition; the original
+has nothing to put there, having no keyboard controls to explain.
 
 **The attract mode is not a screen.** There is no title picture to leave: the game boots
 into a bout it plays against itself, and that state is simply `$50 = $51 = 0`. With both
