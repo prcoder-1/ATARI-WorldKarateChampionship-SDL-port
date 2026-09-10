@@ -53,6 +53,9 @@ make
 
 `F1` and `F2` stand in for the console keys the original reads from `CONSOL`.
 
+It starts the way the original does, with no title screen: the game plays a bout against
+itself, with the music on and the sound effects off, until you press one of them.
+
 Run `make verify` to check both halves: the backgrounds against emulator captures, and
 the fighter state machine against its own invariants.
 

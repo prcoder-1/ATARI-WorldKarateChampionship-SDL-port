@@ -5,7 +5,7 @@ LDLIBS  += -lm
 
 worldkarate: worldkarate.c fighter.h ai.h pokey.h sfx.h hud.h atari_gfx.h game_data.h \
              generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h \
-             generated/hud.h generated/signs.h generated/pips.h generated/hit.h hit_test.h
+             generated/hud.h generated/signs.h generated/pips.h generated/hit.h generated/popup.h hit_test.h
 	$(CC) $(CFLAGS) $< -o $@ $(PKG) $(LDLIBS)
 
 run: worldkarate
@@ -48,6 +48,11 @@ verify-sfx: verify_sfx.c sfx.h generated/sfx.h
 verify-sprites:
 	python3 verify_sprites.py
 
+# The points-scored popup extractor is its own check: it re-draws one back over the
+# capture that caught it and refuses to emit unless every ink pixel matches.
+verify-popup:
+	python3 extract_popup.py
+
 # The marker extractor is its own check as well: it re-draws every dot over each
 # capture and refuses to emit unless they match exactly.
 verify-pips:
@@ -63,9 +68,9 @@ verify-signs:
 verify-hud:
 	python3 extract_hud.py
 
-verify: verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-hit verify-music verify-sfx verify-hud
+verify: verify-scenes verify-sprites verify-signs verify-pips verify-popup verify-fighter verify-hit verify-music verify-sfx verify-hud
 
 clean:
 	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx /tmp/verify_hit
 
-.PHONY: run clean verify verify-scenes verify-sprites verify-signs verify-pips verify-fighter verify-hit verify-music verify-sfx verify-hud
+.PHONY: run clean verify verify-scenes verify-sprites verify-signs verify-pips verify-popup verify-fighter verify-hit verify-music verify-sfx verify-hud

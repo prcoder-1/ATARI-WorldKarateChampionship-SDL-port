@@ -36,6 +36,7 @@
 #include "generated/referee.h"    /* the referee, captured from the screen             */
 #include "generated/signs.h"      /* the signs he holds up, captured the same way      */
 #include "hit_test.h"             /* $415D: whether a blow landed                      */
+#include "generated/popup.h"      /* the points a blow scores, put up on the ground    */
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame -------
@@ -97,8 +98,10 @@ static void audioCB(void* u,Uint8* stream,int len){
 }
 
 /* ---------------- global game state ---------------- */
-enum { G_TITLE, G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END };
-static int gstate=G_TITLE;
+/* There is no title screen: the game boots into the demo, which is a bout it plays
+ * against itself ($50 and $51 both zero), and START or SELECT takes over from there. */
+enum { G_FIGHT, G_POINT, G_ROUND_END, G_MATCH_END };
+static int gstate=G_FIGHT;
 static int stateTimer=0;
 static Fighter p1,p2;
 static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
@@ -145,6 +148,10 @@ static char banner[64]="";
  * sign he holds up beside him. The bitmaps are captured (generated/signs.h) and named
  * there; the port asks for one by name so a missing sign fails visibly rather than
  * silently drawing the wrong board. */
+/* $613F and $6140: which points-scored number to put up, and where. The hit test has
+ * always worked both out ($4044/$404C and $42DE); until now the port dropped them and
+ * drew an invented "BONUS n" banner instead. */
+static int popupIndex=-1, popupColumn=0;
 static int signIndex=-1;
 static int signTimer;
 
@@ -160,6 +167,10 @@ static void signShow(const char* want,int frames)
 }
 static int paused=0;
 static int p2isCPU=1;
+/* $0050/$0051: the demo is simply the state where BOTH are zero. $3312 sets them when
+ * the console keys are pressed -- START gives $50=1,$51=0 and SELECT $50=1,$51=1 -- and
+ * until then the game plays itself with the music on and the effects off. */
+static int p1isCPU=1;
 static int aiSkill=1;   /* $F6: the ROM's skill level, 1..5, rising with the DAN rank */
 static unsigned rng=0x1234;
 static unsigned rnd(void){ rng=rng*1103515245u+12345u; return (rng>>16)&0x7fff; }
@@ -227,6 +238,23 @@ static void drawFighter(const Fighter* f, Col gi)
 /* The sign he holds up. It is a Player/Missile object like he is, always the same size
  * and always in the same place beside him; index 0 in a captured sign is the ground
  * showing through its cut corner. */
+/* $4660/$46F0: the points a blow scored, four characters on the ground at the column
+ * $6140 worked out from the attacker's position. Pixel value 3 is COLPF3 ($0F, white)
+ * and value 1 COLPF0 ($00, black); 0 and 2 let the ground through. */
+static void drawPopup(void)
+{
+    if(popupIndex<0 || popupIndex>=POPUP_COUNT) return;
+    static const Col ink={POPUP_COL_INK}, shadow={POPUP_COL_SHADOW};
+    int left = POPUP_LEFT + popupColumn * POPUP_PX_PER_CHAR * POPUP_CLOCKS_PER_PX;
+    for(int y=0;y<POPUP_LINES;y++)
+        for(int x=0;x<POPUP_CHARS*POPUP_PX_PER_CHAR;x++){
+            uint8_t v=POPUP_PX[popupIndex][y][x];
+            if(v!=1 && v!=3) continue;
+            setcol(v==3?ink:shadow);
+            fillrect(left+x*POPUP_CLOCKS_PER_PX, POPUP_TOP+y, POPUP_CLOCKS_PER_PX, 1);
+        }
+}
+
 static void drawSign(void)
 {
     if(signIndex<0 || signIndex>=SIGN_COUNT) return;
@@ -307,7 +335,6 @@ static void drawText(int x,int y,const char* t,Col col)
 static void drawTextC(int y,const char* t,Col col){ drawText((LW-(int)strlen(t)*8)/2,y,t,col); }
 
 /* ---------------- HUD ---------------- */
-static int lastBonus=0;
 static uint8_t hudCells[HUD_CELLS];
 
 static void drawHUD(void)
@@ -317,7 +344,7 @@ static void drawHUD(void)
      * longer passed: $5F66 derives it from the score. */
     hudCompose(hudCells, p1.isHuman, p2.isHuman, demo, roundClock,
                level, p1.score, p2.score,
-               p1.wins, p2.wins, gstate==G_TITLE);
+               p1.wins, p2.wins, 0);
     hudDraw(hudCells, LW, LH, setpx1);
     hudMarkers(p1.points, p2.points, p1.isHuman, p2.isHuman, LW, LH, setpx1);
 }
@@ -339,9 +366,14 @@ static void resetPositions(void)
     placeFighter(&p2,T_START_X+0x20,1,1);   /* faces left  */
     p2.isCPU=cpu; p1.wins=w1; p2.wins=w2; p1.points=s1; p2.points=s2;
     /* $0050,y: nonzero = joystick, zero = the CPU routine */
-    p1.isHuman=1;
+    p1.isHuman=!p1isCPU;
     p2.isHuman=!p2.isCPU;
 }
+
+/* The attract state: the game plays itself. $50 and $51 are both zero, so $3D04 drives
+ * both fighters and $51F9 reads nothing; the music runs and the effects are off, which
+ * is the mirror of what $3337 sets up when a game starts. */
+static void demoStart(void);
 
 static void newBout(void)
 {
@@ -377,11 +409,10 @@ static void award(Fighter* a, const HitResult* h)
     a->points += h->hit;                          /* $4508 */
     if(a->points > HIT_POINTS_MAX) a->points = HIT_POINTS_MAX;   /* $450B */
     a->score += bcd(h->score) * 100;              /* $4550, in BCD */
-    /* $311E's time bonus keys off $00DF, the frame counter the bout spins on; the port
-     * has no such counter, so the elapsed fraction of the round clock stands in. */
-    int total = p2.isCPU ? T_CLOCK_1P : T_CLOCK_2P;
-    int elapsed = (bcd(total) - bcd(roundClock)) * 0x28 / (bcd(total) ? bcd(total) : 1);
-    lastBonus=score_time_bonus(elapsed)*100;
+    /* $2DFB: LDA $613F / JSR $46F0 / JSR $4660 -- the number and its column, straight
+     * from the blow. It is the points scored: 100, 200, 400, 500, 800 or 1600. */
+    popupIndex = h->sign;
+    popupColumn = h->column;
     /* the game's own wording, off its signs. $613F names the announcement the ROM puts
      * up, but what it indexes has not been established, so the sign is still chosen by
      * the blow's weight rather than by that number. */
@@ -502,6 +533,16 @@ static void vblank(void)
     soundFrame();
 }
 
+static void demoStart(void)
+{
+    p1isCPU=1; p2isCPU=1; p2.isCPU=1;
+    bg=0; boutCount=0; level=0; aiSkill=1;
+    p1.wins=p2.wins=0; p1.score=p2.score=0;
+    musicOn=1; sfxOn=0; musicPlay(&music);
+    popupIndex=-1;
+    newBout();
+}
+
 int main(int argc,char**argv)
 {
     (void)argc;(void)argv;
@@ -518,7 +559,7 @@ int main(int argc,char**argv)
     musicPlay(&music);                 /* $26C0 */
     if(audio) SDL_PauseAudioDevice(audio,0);
 
-    resetPositions(); p2.isCPU=p2isCPU;
+    demoStart();
 
     Uint32 last=SDL_GetTicks(); double acc=0; const double FT=1000.0/FPS;
     bool run=true;
@@ -537,8 +578,11 @@ int main(int argc,char**argv)
                 /* $3312 reads CONSOL: START gives one player, SELECT two.
                  * F1 and F2 stand in for those two console keys. */
                 if(kc==SDLK_F1||kc==SDLK_F2||kc==SDLK_SPACE){
-                    if(gstate==G_TITLE){
+                    if(gstate!=G_MATCH_END){
+                        /* $3312/$3337: START one player, SELECT two -- either way the
+                         * demo ends here, the effects come on and the music goes off. */
                         int twoPlayer = (kc==SDLK_F2);
+                        p1isCPU=0;
                         /* $2C90: a new match clears the level and both scores, then
                          * $2C9F bumps the starting skill and wraps it at 5 -- so the
                          * difficulty each game begins at rotates 1,2,3,4,1,... */
@@ -551,10 +595,10 @@ int main(int argc,char**argv)
                         sfxOn=1; musicOn=0; musicStop(&music);
                         newBout();
                     }
-                    else if(gstate==G_MATCH_END){
-                        gstate=G_TITLE;
-                        /* back to the attract state: music on, effects off */
-                        musicOn=1; sfxOn=0; musicPlay(&music);
+                    else {
+                        /* back to the attract state, which is a bout the game plays
+                         * against itself: music on, effects off */
+                        demoStart();
                     }
                 }
             }
@@ -564,7 +608,6 @@ int main(int argc,char**argv)
             acc-=FT;
             if(!paused){
                 switch(gstate){
-                    case G_TITLE: break;
                     case G_FIGHT:
                         if(gameTickDue(0)) fightTick(SDL_GetKeyboardState(NULL));
                         break;
@@ -596,7 +639,7 @@ int main(int argc,char**argv)
                              * Ending the match at BLACK is the PORT'S choice, not the
                              * ROM's: the game just keeps going and the scene cycles for
                              * ever. What ends a one-player game there is not established. */
-                            if(hudBelt(p1.score) >= HUD_BELTS-1){
+                            if(!p1isCPU && hudBelt(p1.score) >= HUD_BELTS-1){
                                 gstate=G_MATCH_END; strcpy(banner,"BLACK BELT!");
                             } else newBout();
                         }
@@ -608,7 +651,7 @@ int main(int argc,char**argv)
         }
 
         drawBackground();
-        if(gstate!=G_TITLE){
+        {
             drawReferee();
             drawSign();
             /* $3C2E composes the pair in an order set by $6114, the fighter an
@@ -619,18 +662,9 @@ int main(int argc,char**argv)
             else            { drawFighter(&p2,COL_GI_P2); drawFighter(&p1,COL_GI_P1); }
             drawHUD();
         }
-        if(gstate==G_TITLE){
-            drawTextC(70,"WORLD KARATE",rgb(255,255,255));
-            drawTextC(84,"CHAMPIONSHIP",rgb(255,255,255));
-            drawTextC(112,"SDL PORT",rgb(255,200,60));
-            drawTextC(140,"F1 START ONE PLAYER",rgb(200,200,200));
-            drawTextC(154,"F2 SELECT TWO PLAYERS",rgb(200,200,200));
-            drawTextC(176,"P1 WASD LSHIFT   P2 ARROWS RSHIFT",rgb(120,140,180));
-            drawTextC(190,"M MUSIC   N EFFECTS   P PAUSE   ESC QUIT",rgb(120,140,180));
-        } else if(gstate==G_POINT||gstate==G_ROUND_END||gstate==G_MATCH_END){
+        if(gstate==G_POINT||gstate==G_ROUND_END||gstate==G_MATCH_END){
             drawTextC(100,banner,rgb(255,255,80));
-            if(gstate==G_POINT && lastBonus>0){ char bb[24]; sprintf(bb,"BONUS %d",lastBonus);
-                drawTextC(116,bb,rgb(255,200,80)); }
+            if(gstate==G_POINT) drawPopup();
             if(gstate==G_MATCH_END) drawTextC(124,"PRESS SPACE",rgb(200,200,200));
         }
         if(paused) drawTextC(110,"PAUSED",rgb(255,255,255));

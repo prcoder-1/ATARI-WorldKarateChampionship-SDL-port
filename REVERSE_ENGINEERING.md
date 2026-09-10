@@ -176,6 +176,38 @@ routine fires but does not pair a state with its outcome. An attempt to close th
 patching a probe into `$288D` from the emulator's monitor did not work: the monitor stops
 answering after the first resume.
 
+### What a scoring blow puts on screen
+
+Not a banner, and not the word BONUS: **the points**, 100, 200, 400, 500, 800 or 1600,
+in four characters on the ground. Two routines, fed by the hit test's own outputs:
+
+```
+46F0: CMP #$06 / BCS ..                       ; A = $613F, six of them
+46F4: TAY / LDA $46EA,Y / TAY / LDX #$0F
+46FB: LDA $467A,Y / STA $1180,X / STA $1580,X ; the digits, into characters $30/$31
+4704: LDA $46DA,X / STA $1190,X / STA $1590,X ; the trailing "00", $32/$33
+470D: DEY / DEX / BPL $46FB                   ; of BOTH lower character sets
+
+4660: LDA $6119 / STA $63 / LDA #$C0 / STA $62   ; $08C0 or $18C0 -- row 4 of the ground
+4669: LDA #$B0 / LDY $6140 / LDX #$03
+4670: STA ($62),Y / ADC #$01 / INY / DEX / BPL   ; codes $B0..$B3 at column $6140
+```
+
+So the *glyphs* change and the four screen codes never do. Bit 7 of those codes sends
+pixel value 3 to COLPF3, which is `$0F` for this band, and value 1 is COLPF0, `$00` —
+white digits with a black shadow.
+
+`$613F` is the same number `$4044`/`$404C` gave the blow, and it always agrees with the
+score `$6132` adds: index 0..5 is 100, 200, 400, 500, 800, 1600 against `$6132` of
+`$01, $02, $04, $05, $08, $16`. So the announcement the port had been recording and not
+using is simply the points scored — that closes the "not established" note this document
+carried.
+
+Measured on a capture that caught one: the field sits at scanline 161, its column 24
+there, and re-rendering the ROM's glyphs over it differs in **0 of 134 ink pixels**
+(`extract_popup.py`, `make verify-popup`). Row 4 of the ground text region at scanline
+161 puts that region's top at 129.
+
 **Reaction to a blow** (`$2FFA`/`$3004`): play freezes (`$D8`), and the struck fighter is
 forced into move **17** if the blow came from the front or **18** if from behind.
 
@@ -722,6 +754,14 @@ match at the black belt is the **port's** choice; the game itself just keeps goi
 
 **Starting a game** (`$3312`) reads `CONSOL`: **START** gives one player and **SELECT**
 two. Either way `$3337` sets `$50`/`$51`, turns the effects on and the music off.
+
+**The attract mode is not a screen.** There is no title picture to leave: the game boots
+into a bout it plays against itself, and that state is simply `$50 = $51 = 0`. With both
+zero `$3D04` drives both fighters and `$51F9` reads no stick, the HUD prints DEMO in
+place of TIME (`$5BAE`), the ippon markers stay visible (`$3892` only hides them when
+both are people) and the music plays with the effects off — the mirror of what `$3337`
+sets up when someone presses a console key. The port had an invented title screen with
+the key bindings on it; it now boots into the demo, and the bindings live in the README.
 
 ## Backgrounds (recovered pixel-exactly)
 
