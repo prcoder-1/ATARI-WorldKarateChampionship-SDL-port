@@ -162,6 +162,7 @@ static int fWins[2];
 /* $5DE0: which row of the table the loser is putting a name into, and the entry
  * itself (hiscore.h). In the original the stick picks the letters and the button
  * takes them; here the movement keys do the picking. */
+#define HS_PATH "worldkarate.scores"
 static int nameRow=-1;
 static HsName nameEntry;
 #define SCENE_EVERY 8
@@ -299,9 +300,11 @@ static void drawSign(void)
         }
 }
 
+/* He is on screen for as long as the arena is. The state list that used to be here left
+ * him out of G_MATCH_END, so he vanished from under his own MATCH OVER board; the caller
+ * already draws the arena only in the states that have one. */
 static void drawReferee(void)
 {
-    if(gstate!=G_FIGHT && gstate!=G_POINT && gstate!=G_ROUND_END) return;
     for(int y=0;y<REF_H;y++)
         for(int k=0;k<REF_W;k++){
             uint8_t v=REF_PX[y*REF_W+k];
@@ -650,7 +653,8 @@ int main(int argc,char**argv)
     SDL_AudioSpec want,have; SDL_zero(want);
     want.freq=SR; want.format=AUDIO_S16SYS; want.channels=1; want.samples=512; want.callback=audioCB;
     audio=SDL_OpenAudioDevice(NULL,0,&want,&have,0);
-    hsReset();
+    /* the table is the port's own keeping; the game had nowhere to put it */
+    hsLoad(HS_PATH);
     musicInit(&music); pokeyOscInit(&pokeyOsc); sfxInit(&sfx); musSamples=0;
     musicPlay(&music);                 /* $26C0 */
     if(audio) SDL_PauseAudioDevice(audio,0);
@@ -757,6 +761,7 @@ int main(int argc,char**argv)
                                 hsNameBegin(&nameEntry, HS_START[0].name);
                                 gstate=G_NAME;
                             } else {
+                                if(nameRow>=0) hsSave(HS_PATH);   /* it placed, unnamed */
                                 nameRow=-1;
                                 gstate=G_HISCORE; stateTimer=T_HISCORE;
                             }
@@ -772,6 +777,7 @@ int main(int argc,char**argv)
                             if(nameRow>=0)
                                 memcpy(hsTable[nameRow].name,nameEntry.buf,HS_NAME_LEN);
                             nameRow=-1;
+                            hsSave(HS_PATH);
                             gstate=G_HISCORE; stateTimer=T_HISCORE;
                         }
                         break; }

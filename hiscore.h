@@ -33,6 +33,7 @@
 #ifndef HISCORE_TABLE_H
 #define HISCORE_TABLE_H
 
+#include <stdio.h>
 #include <string.h>
 #include "generated/hiscore.h"
 
@@ -139,6 +140,50 @@ static int hsNameTick(HsName* n, int stick, int fire)
         if (++n->pos >= HS_NAME_LEN) return 1;         /* $5E98 */
     }
     return 0;
+}
+
+/* Keeping the table between runs is the PORT'S doing. The original has nowhere to put
+ * it: the table lives in RAM at $6220..$624F and a power cycle takes it with it. The
+ * file is plain text so it can be read, edited or thrown away by hand, and anything the
+ * port does not recognise in it falls back to the table the game starts with. */
+#define HS_FILE_MAGIC "worldkarate-hiscore 1"
+
+static void hsSave(const char* path)
+{
+    FILE* f = fopen(path, "w");
+    if (!f) return;                       /* not being able to save is not fatal */
+    fprintf(f, "%s\n", HS_FILE_MAGIC);
+    for (int i = 0; i < HS_ENTRIES; i++)
+        fprintf(f, "%d %d %d %d %d %d\n", hsTable[i].hi, hsTable[i].lo, hsTable[i].belt,
+                hsTable[i].name[0], hsTable[i].name[1], hsTable[i].name[2]);
+    fclose(f);
+}
+
+static void hsLoad(const char* path)
+{
+    hsReset();                            /* whatever happens, the table is valid after */
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    char line[128];
+    if (!fgets(line, sizeof line, f) || strncmp(line, HS_FILE_MAGIC, strlen(HS_FILE_MAGIC))) {
+        fclose(f);
+        return;
+    }
+    HsRow got[HS_ENTRIES];
+    for (int i = 0; i < HS_ENTRIES; i++) {
+        int hi, lo, belt, a, b, c;
+        if (fscanf(f, "%d %d %d %d %d %d", &hi, &lo, &belt, &a, &b, &c) != 6
+            || (unsigned)hi > 0x99 || (unsigned)lo > 0x99 || (unsigned)belt > 5
+            || (unsigned)a > 0x7F || (unsigned)b > 0x7F || (unsigned)c > 0x7F) {
+            fclose(f);
+            return;                       /* short or malformed: keep the fresh table */
+        }
+        got[i].hi = hi; got[i].lo = lo; got[i].belt = belt;
+        got[i].name[0] = (uint8_t)a; got[i].name[1] = (uint8_t)b; got[i].name[2] = (uint8_t)c;
+    }
+    fclose(f);
+    for (int i = 0; i < HS_ENTRIES; i++) hsTable[i] = got[i];
+    hsSort();                             /* a hand-edited file need not be in order */
 }
 
 static int hsScoreOf(const HsRow* r)

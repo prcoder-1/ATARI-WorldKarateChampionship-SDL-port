@@ -59,6 +59,11 @@ until you press one of them. Lose a match and the referee holds up MATCH OVER; i
 score makes the table you put three characters in with the movement keys -- left and
 right pick a letter, fire takes it -- and then the demo comes back round.
 
+The table is kept in `worldkarate.scores` beside the binary, which is the port's own
+doing: the original's lives in RAM and goes with the power. It is plain text, so it can
+be read or thrown away by hand; anything the port cannot make sense of in it falls back
+to the empty table the game starts with.
+
 Run `make verify` to check both halves: the backgrounds against emulator captures, and
 the fighter state machine against its own invariants.
 

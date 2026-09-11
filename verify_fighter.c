@@ -549,6 +549,44 @@ int main(void)
         check(frames + 1 == HS_NAME_TIMEOUT, "$6171 ends it after ten of its ticks");
     }
 
+    /* Keeping the table between runs is the port's own doing -- the game's lives in RAM
+     * and goes with the power. Round-trip it, and make sure a file it cannot read leaves
+     * a usable table behind rather than nonsense. */
+    printf("the high-score table survives a save and load\n");
+    {
+        static const uint8_t nm[HS_NAME_LEN] = { 0x0B, 0x0C, 0x0D };
+        const char* path = "/tmp/wk_hiscore_test.dat";
+        remove(path);
+        hsReset();
+        hsSubmit(40000, 5, nm);
+        hsSubmit(12000, 2, nm);
+        int a0 = hsScoreOf(&hsTable[0]), a1 = hsScoreOf(&hsTable[1]);
+        hsSave(path);
+        hsReset();
+        check(hsScoreOf(&hsTable[0]) == 0, "a reset table is empty");
+        hsLoad(path);
+        printf("    saved %d/%d, loaded %d/%d\n",
+               a0, a1, hsScoreOf(&hsTable[0]), hsScoreOf(&hsTable[1]));
+        check(hsScoreOf(&hsTable[0]) == a0 && hsScoreOf(&hsTable[1]) == a1,
+              "the scores come back");
+        check(hsTable[0].belt == 5 && hsTable[0].name[0] == 0x0B,
+              "and so do the belt and the name");
+
+        FILE* bad = fopen(path, "w");
+        if (bad) { fprintf(bad, "not this file\n"); fclose(bad); }
+        hsLoad(path);
+        check(hsScoreOf(&hsTable[0]) == 0, "a file it does not recognise leaves a fresh table");
+
+        bad = fopen(path, "w");
+        if (bad) { fprintf(bad, "%s\n1 2 3 4 5 6\n", HS_FILE_MAGIC); fclose(bad); }
+        hsLoad(path);
+        check(hsScoreOf(&hsTable[0]) == 0, "so does one that stops short");
+        remove(path);
+
+        hsLoad("/tmp/wk_hiscore_missing.dat");
+        check(hsScoreOf(&hsTable[HS_ENTRIES-1]) == 0, "and so does no file at all");
+    }
+
     printf("$3F71 stays inside its limit\n");
     {
         int bad = 0, lo = 99, hi = -1;
