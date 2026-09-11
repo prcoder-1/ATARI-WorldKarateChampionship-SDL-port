@@ -22,6 +22,7 @@ Usage: python3 extract_signs.py [capture_dir ...]
 import glob
 import hashlib
 import os
+import re
 import struct
 import sys
 import zlib
@@ -123,6 +124,19 @@ def main():
     if not seen:
         print("no signs found in %d captures" % len(shots))
         return 1
+
+    # Never replace the emitted table with a smaller one. The captures are not in this
+    # repository (see README.md), and only a few of them come with the scene grabs that
+    # are -- so running this with a partial set would quietly cut the eleven signs down
+    # to whichever happened to be lying around, taking MATCH OVER and the rest with them.
+    try:
+        have = re.search(r"#define SIGN_COUNT (\d+)", open(OUT).read())
+    except OSError:
+        have = None
+    if have and len(seen) < int(have.group(1)):
+        print("found %d signs but %s already has %d -- skipping rather than shrink it"
+              % (len(seen), OUT, int(have.group(1))))
+        return 0
 
     # most-seen first, so the ordering is stable across runs
     order = [seen[k] for k in keys]
