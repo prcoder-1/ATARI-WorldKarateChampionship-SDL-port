@@ -29,7 +29,7 @@ def c_render(i):
 def main():
     total = 0
     for i in range(SCENES):
-        shot = "../extracted/scenes/scene%d_f1.png" % i
+        shot = "extracted/scenes/scene%d_f1.png" % i
         dump = shot[:-4] + ".bin"
         if not (os.path.exists(shot) and os.path.exists(dump)):
             # The game's own data is not in this repository; capture_scenes.sh makes

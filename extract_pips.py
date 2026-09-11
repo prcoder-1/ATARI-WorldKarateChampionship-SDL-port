@@ -37,8 +37,8 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-CAPTURES = sys.argv[1:] or ["../extracted/signs", "../extracted/scenes",
-                            "../extracted/colour4"]
+CAPTURES = sys.argv[1:] or ["extracted/signs", "extracted/scenes",
+                            "extracted/colour4"]
 DARK = (104, 27, 35)
 LIT = (250, 204, 144)
 BAND_TOP, BAND_BOT = 8, 40          # the HUD band, well clear of the playfield
@@ -49,7 +49,7 @@ POINT_INDEX = 0x44A7
 POINT_BITMAP = 0x44AE
 POINT_ROWS = 11
 POINT_MAX = 5                       # $450B clamps $00D9,y here
-DUMPS = ("../extracted/ram_true_64k.bin", "../extracted/fightdumps/dump_00.bin")
+DUMPS = ("extracted/ram_true_64k.bin", "extracted/fightdumps/dump_00.bin")
 
 
 def load_point_table():

@@ -33,7 +33,7 @@ from scipy import ndimage
 
 # Several capture runs can be merged: more attempts means more shapes land on a frame
 # where the fighter is fully drawn.
-CAPTURES = sys.argv[1:] or ["../extracted/colour4"]
+CAPTURES = sys.argv[1:] or ["extracted/colour4"]
 NSHAPES = 54          # $558D-driven frames reference shape ids up to 51; the
                       # shape tables run to 53 and the ROM zeroes anything >= $36
 CLOCKS_PER_PX = 2

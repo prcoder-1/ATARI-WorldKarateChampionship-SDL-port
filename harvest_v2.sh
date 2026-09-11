@@ -11,13 +11,13 @@
 #   * background reference is taken in the same frozen state, first, with both fighters
 #     parked on unused shape 4.
 #
-# Usage: harvest_v2.sh [outdir]   (default ../extracted/harvest2)
+# Usage: harvest_v2.sh [outdir]   (default extracted/harvest2)
 set -u
 # DISP: X display to drive. Xvfb :99 is shared and has been seen to wedge; use a
 # private display by default and start it if it is not up.
 DISP="${DISP:-:95}"
 # the repository root, wherever this script happens to live
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${1:-$DIR/extracted/harvest2}"
 mkdir -p "$OUT"
 # Must be absolute: the emulator's monitor resolves WRITE paths from ITS OWN working

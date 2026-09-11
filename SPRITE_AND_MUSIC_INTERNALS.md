@@ -1,8 +1,8 @@
 # World Karate Championship — sprite output and music player internals
 
-Reverse-engineered from `../extracted/ram_full_0000_BFFF.dasm` (the decrypted in-RAM image
+Reverse-engineered from `extracted/ram_full_0000_BFFF.dasm` (the decrypted in-RAM image
 of the running game) and verified against live emulator captures in
-`../extracted/harvest2/`. Addresses are the game's real run-time addresses.
+`extracted/harvest2/`. Addresses are the game's real run-time addresses.
 
 Everything below is either **verified** (reproduced from a live capture or a dump of the
 table itself) or marked **inferred**. Companion documents: `REVERSE_ENGINEERING.md` (overall

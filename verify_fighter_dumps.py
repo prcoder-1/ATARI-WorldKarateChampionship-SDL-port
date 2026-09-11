@@ -44,7 +44,7 @@ def check(cond, what, detail=""):
 
 
 def main():
-    files = sys.argv[1:] or sorted(glob.glob("../extracted/fightdumps/dump_*.bin"))
+    files = sys.argv[1:] or sorted(glob.glob("extracted/fightdumps/dump_*.bin"))
     files = [f for f in files if os.path.getsize(f) >= 0x6200]
     if not files:
         print("no fight dumps present -- harvest them first; skipping")

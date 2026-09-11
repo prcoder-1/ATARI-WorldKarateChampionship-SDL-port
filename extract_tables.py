@@ -57,7 +57,7 @@ TIMING_OUT = "generated/timing.h"
 def find_dump():
     if len(sys.argv) > 1:
         return sys.argv[1]
-    for pat in ("../extracted/scenes/*.bin", "../extracted/colour4/*.bin"):
+    for pat in ("extracted/scenes/*.bin", "extracted/colour4/*.bin"):
         got = sorted(glob.glob(pat))
         if got:
             return got[0]

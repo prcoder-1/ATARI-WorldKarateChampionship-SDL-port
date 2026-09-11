@@ -28,7 +28,7 @@ import zlib
 import numpy as np
 from PIL import Image
 
-CAPTURES = sys.argv[1:] or ["../extracted/colour4", "../extracted/scenes"]
+CAPTURES = sys.argv[1:] or ["extracted/colour4", "extracted/scenes"]
 GI_WHITE = (211, 211, 211)
 SKIN = (189, 113, 121)
 OUTLINE = (4, 4, 4)

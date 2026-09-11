@@ -60,7 +60,7 @@ ASCII_BIAS = 0x36       # ASCII -> game character code
 LOWER_BIAS = 0x19       # game character code -> the lower character set's code
 
 OUT = "generated/hiscore.h"
-DUMPS = ("../extracted/ram_true_64k.bin", "../extracted/fightdumps/dump_00.bin")
+DUMPS = ("extracted/ram_true_64k.bin", "extracted/fightdumps/dump_00.bin")
 
 
 def find_dump():

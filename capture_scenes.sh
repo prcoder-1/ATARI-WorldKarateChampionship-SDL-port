@@ -16,7 +16,7 @@
 set -u
 DISP="${DISP:-:95}"
 # the repository root, wherever this script happens to live
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${1:-$DIR/extracted/scenes}"
 FRAMES=${FRAMES:-3}
 SCENES=${SCENES:-}

@@ -31,7 +31,7 @@ import sys
 import numpy as np
 from PIL import Image
 
-CAPTURES = sys.argv[1:] or ["../extracted/colour4"]
+CAPTURES = sys.argv[1:] or ["extracted/colour4"]
 HEADER = "generated/shapes_pm.h"
 CLOCKS_PER_PX = 2
 FX_ORIGIN = 28            # $E1 -> colour clocks: 2*x + 28, as worldkarate.c has it

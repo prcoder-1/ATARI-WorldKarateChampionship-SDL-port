@@ -41,7 +41,7 @@ OUT = "generated/sfx.h"
 
 
 def find_dumps():
-    got = sorted(glob.glob("../extracted/scenes/*.bin"))
+    got = sorted(glob.glob("extracted/scenes/*.bin"))
     if not got:
         return None
     return got

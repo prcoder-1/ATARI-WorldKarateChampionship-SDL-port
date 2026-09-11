@@ -1,0 +1,16 @@
+# Build output
+worldkarate
+__pycache__/
+*.o
+
+# The high-score table the port keeps between runs
+worldkarate.scores
+
+# The game itself is not in this repository: the disk image, the dumps taken off it and
+# the screen captures are verbatim copies of a commercial 1984 program. Keep your own
+# here -- README.md says what the tools expect and where.
+World Karate Championship.atr
+extracted/
+
+# Project instructions for Claude Code -- local, not part of the port
+CLAUDE.md

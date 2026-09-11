@@ -12,17 +12,17 @@ Bring your own if you want to re-derive anything:
 
 | put here | what it is | made by |
 |---|---|---|
-| `World Karate Championship.atr` (repo root) | the disk image | — |
+| `World Karate Championship.atr` (beside the Makefile) | the disk image | — |
 | `extracted/ram_true_64k.bin` | a 64K RAM dump of the running game | the emulator's monitor |
-| `extracted/scenes/*.bin` | per-scene RAM dumps | `port/capture_scenes.sh` |
-| `extracted/colour4/`, `extracted/signs/`, … | screen captures | `port/harvest_v2.sh`, `port/harvest_signs.sh` |
+| `extracted/scenes/*.bin` | per-scene RAM dumps | `capture_scenes.sh` |
+| `extracted/colour4/`, `extracted/signs/`, … | screen captures | `harvest_v2.sh`, `harvest_signs.sh` |
 
-**The port builds and runs without any of it** — everything under `port/generated/` is
+**The port builds and runs without any of it** — everything under `generated/` is
 committed. What needs the originals is re-running the extractors and the parts of
 `make verify` that compare against the real machine; those skip with a message when the
 data is absent rather than failing.
 
-Note that `port/generated/` still holds the game's own sprites, scenes, music and tables.
+Note that `generated/` still holds the game's own sprites, scenes, music and tables.
 This is not a clean-room reimplementation; see the note at the end of this file before
 redistributing anything.
 
@@ -115,8 +115,13 @@ Every pose also carries its absolute top scanline, which is the whole of a sprit
 vertical placement.
 
 The referee is there too, captured the same way. He signals from the spot: `$6159` is
-how far through one of his three signalling actions he is, not where he is, and finishing
-one is what takes a tick off the round counter — so a round is a number of his actions.
+how far through one of his three signalling actions he is, not where he is.
+
+**Correction.** This section used to say that finishing an action takes a tick off the
+round counter, "so a round is a number of his actions". That is wrong. `$3972` calls the
+referee's step `$5807` only when `$D0 == 5`, a separate bonus stage that is not ported; an
+ordinary bout ends at `$2BA2`, on the 30-second clock or at four points. The port ran the
+traversal counter anyway and so ended every bout in 13 seconds.
 
 `check_shape_ids.py` exists because a first attempt at the poses — reading the
 Player/Missile planes instead of the screen — came out **mislabelled**, and that script
@@ -132,7 +137,7 @@ which turns out to be the arena-clamp width rather than the drawn one. See
 - `pokey.h` — the original's music player (`$1F06`) and enough of POKEY to hear it
 - `generated/music.h` — the tune: 3 sequences, 27 patterns, 5 envelopes, both pitch tables
 - `extract_sfx.py` — regenerates the sound-effect data
-- `generated/timing.h` — the bout's frame counts and the referee-driven round clock
+- `generated/timing.h` — the bout's frame counts and the 30-second round clock
 - `verify_music.c` / `verify_music.py` — `make verify-music`, including a diff against
   atari800's `-pokeyrec` register recording
 - `sfx.h` — the original's digitised sound effects (`$3A7C`/`$3AE0`)

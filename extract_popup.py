@@ -56,11 +56,11 @@ WHITE = (211, 211, 211)     # COLPF3 = $0F, the digits
 BLACK = (4, 4, 4)           # COLPF0 = $00, the shadow
 
 OUT = "generated/popup.h"
-DUMPS = ("../extracted/ram_true_64k.bin", "../extracted/colour4/bg_e1.bin",
-         "../extracted/fightdumps/dump_00.bin")
+DUMPS = ("extracted/ram_true_64k.bin", "extracted/colour4/bg_e1.bin",
+         "extracted/fightdumps/dump_00.bin")
 # the capture that caught one on screen, and where it sat
-CHECK_PNG = "../extracted/colour4/bg_e1.png"
-CHECK_DUMP = "../extracted/colour4/bg_e1.bin"
+CHECK_PNG = "extracted/colour4/bg_e1.png"
+CHECK_DUMP = "extracted/colour4/bg_e1.bin"
 
 
 def find_dump():

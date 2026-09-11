@@ -118,8 +118,8 @@ def colour_at(entry, v, alt):
 
 
 def main():
-    dump = sys.argv[1] if len(sys.argv) > 1 else find(["../extracted/scenes/*.bin"])
-    shot = sys.argv[2] if len(sys.argv) > 2 else find(["../extracted/scenes/*.png"])
+    dump = sys.argv[1] if len(sys.argv) > 1 else find(["extracted/scenes/*.bin"])
+    shot = sys.argv[2] if len(sys.argv) > 2 else find(["extracted/scenes/*.png"])
     if dump is None or shot is None:
         # not in this repository -- see README.md for what to put where
         print("no scene dump and capture to work from -- skipping")

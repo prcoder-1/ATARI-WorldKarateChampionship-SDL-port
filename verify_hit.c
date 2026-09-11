@@ -123,7 +123,7 @@ int main(void)
         int n = 0, predicted = 0, dumpSaid = 0;
         for (int i = 0; i < 30; i++) {
             char path[128];
-            snprintf(path, sizeof path, "../extracted/fightdumps/dump_%02d.bin", i);
+            snprintf(path, sizeof path, "extracted/fightdumps/dump_%02d.bin", i);
             FILE* fp = fopen(path, "rb");
             if (!fp) continue;
             static unsigned char d[0x10000];

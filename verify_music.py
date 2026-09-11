@@ -21,7 +21,7 @@ import os
 import sys
 
 REC = 9
-EMU = sys.argv[1] if len(sys.argv) > 1 else "../extracted/pokeyrec.dat"
+EMU = sys.argv[1] if len(sys.argv) > 1 else "extracted/pokeyrec.dat"
 MINE = sys.argv[2] if len(sys.argv) > 2 else "/tmp/wk_pokey.dat"
 MUSIC_AUDCTL = 0x50
 

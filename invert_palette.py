@@ -28,8 +28,8 @@ SCENE_LEFT = 32                      # playfield origin in colour clocks
 SCENE_TOP = 31                       # first playfield scanline (display list at $6260)
 CLOCKS_PER_PIXEL = 2                 # a mode-E pixel is two colour clocks wide
 
-DUMP = sys.argv[1] if len(sys.argv) > 1 else "../extracted/scenes/cur_f3.bin"
-SHOT = sys.argv[2] if len(sys.argv) > 2 else "../extracted/scenes/cur_f3.png"
+DUMP = sys.argv[1] if len(sys.argv) > 1 else "extracted/scenes/cur_f3.bin"
+SHOT = sys.argv[2] if len(sys.argv) > 2 else "extracted/scenes/cur_f3.png"
 
 
 def load_frame(path):
@@ -280,7 +280,7 @@ def main():
     import os
     scenes, skipped = [], []
     for i in range(7):
-        shots = sorted(glob.glob("../extracted/scenes/scene%d_f*.png" % i))
+        shots = sorted(glob.glob("extracted/scenes/scene%d_f*.png" % i))
         got = None
         for shot in shots:
             dump = shot[:-4] + ".bin"

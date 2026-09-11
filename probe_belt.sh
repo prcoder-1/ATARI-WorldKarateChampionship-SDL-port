@@ -13,7 +13,7 @@
 set -u
 DISP="${DISP:-:95}"
 # the repository root, wherever this script happens to live
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$DIR/extracted/beltprobe"; mkdir -p "$OUT"; rm -f "$OUT"/*.bin
 FIFO=/tmp/a8belt; rm -f "$FIFO"; mkfifo "$FIFO"
 cd "$DIR"

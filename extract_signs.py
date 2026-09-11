@@ -31,9 +31,9 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-CAPTURES = sys.argv[1:] or ["../extracted/signs", "../extracted/endgame",
-                            "../extracted/scenes", "../extracted/colour4",
-                            "../extracted/harvest2"]
+CAPTURES = sys.argv[1:] or ["extracted/signs", "extracted/endgame",
+                            "extracted/scenes", "extracted/colour4",
+                            "extracted/harvest2"]
 BOARD = (211, 211, 211)
 INK = (4, 4, 4)
 IDX_BOARD, IDX_INK = 1, 2

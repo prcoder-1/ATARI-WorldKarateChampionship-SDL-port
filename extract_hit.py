@@ -61,8 +61,8 @@ PART_OFFSET = 0x40BB
 def find_dump():
     if len(sys.argv) > 1:
         return sys.argv[1]
-    for pat in ("../extracted/ram_true_64k.bin", "../extracted/fightdumps/*.bin",
-                "../extracted/scenes/*.bin"):
+    for pat in ("extracted/ram_true_64k.bin", "extracted/fightdumps/*.bin",
+                "extracted/scenes/*.bin"):
         got = sorted(glob.glob(pat))
         if got:
             return got[0]

@@ -15,7 +15,7 @@
 set -u
 DISP="${DISP:-:95}"
 # the repository root, wherever this script happens to live
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$DIR/extracted/signs"; mkdir -p "$OUT"; :
 FIFO=/tmp/a8sig; rm -f "$FIFO"; mkfifo "$FIFO"
 cd "$DIR"

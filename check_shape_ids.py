@@ -26,7 +26,7 @@ GI = (132, 55, 63)
 SKIN = (189, 113, 121)
 BLACK = (4, 4, 4)
 CLOCKS_PER_PX = 2          # a sprite pixel is two colour clocks wide
-COLOUR_DIR = "../extracted/colour"
+COLOUR_DIR = "extracted/colour"
 
 
 def load_pm_table(path="generated/shapes_pm.h"):
