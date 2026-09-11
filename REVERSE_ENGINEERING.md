@@ -208,25 +208,48 @@ there, and re-rendering the ROM's glyphs over it differs in **0 of 134 ink pixel
 (`extract_popup.py`, `make verify-popup`). Row 4 of the ground text region at scanline
 161 puts that region's top at 129.
 
-**Reaction to a blow** (`$2FFA`/`$3004`): play freezes (`$D8`), and the struck fighter is
-forced into move **17** if the blow came from the front or **18** if from behind.
+### Reaction to a blow, and how long the poses last
 
-Two things follow from that freeze, and both matter:
+`$415D` setting `$00D8` makes the fight loop hand over: `$2890: LDA $D8 / BNE / LDA #$02
+/ STA $D0`. State 2 is `$2899`, which queues the reaction move `$6130` on the struck
+fighter, starts it, and then loops for `$96` = **150 frames** (`$2903`, on `$00DF`).
 
-- **Only the struck fighter runs.** `$3017`'s loop calls `$274A`, which enters at
-  `$51F1` -- `LDA $D1 / STA $D2 / JSR $53BC`. That is one fighter, the one named by
-  `$D1`, and it deliberately jumps past `$51EE`, the entry that reads the joysticks. So
-  no stick is looked at while play is frozen, and the attacker holds its pose.
-- **The queue is overridden, not obeyed.** `$530F` begins `LDA $D8 / BEQ $531D`, and
-  while the freeze is on it writes `$6131` into `$EC,y` instead of reading it. `$6131`
-  is 0 here (`$289D`, `$2D9F`); `$28EF` sets it to `$20` for the ceremony that ends a
-  bout.
+**Both fighters run through it.** `$28F7` calls `$277A`, which is `$51DC`:
 
-Miss either and a move still queued when the blow lands repeats for the whole freeze,
-with nothing able to stop it -- releasing the key cannot help when no key is read.
-`verify_fighter.c` covers it both ways: obeying the stale queue restarts a jump kick
-three times in 24 ticks, imposing `$6131` restarts it none and leaves the fighter
-standing.
+```
+51DC: JSR $51F9                     ; the sticks are read
+51DF: LDA #$01 / STA $D2 / JSR $53BC  ; fighter 1
+51E6: LDA #$00 / STA $D2 / JSR $53BC  ; fighter 0
+```
+
+What holds them still is not being left alone -- it is `$530F`, which begins
+`LDA $D8 / BEQ $531D` and, while the freeze is on, writes `$6131` into the queue instead
+of reading it. `$6131` is 0 here (`$289D`), so whenever a move ends the fighter is put
+back to stand rather than picking up whatever was last asked for. `$28EF` sets `$6131` to
+`$20` instead, for the ceremony that ends a bout.
+
+So **the poses do not last the whole freeze.** Measured through one state 2 on the
+machine:
+
+| `$00DF` | struck fighter | the other |
+|---|---|---|
+| 9 | shape 36, move 19 | shape 0, still finishing move 6 |
+| 28 | shape 38, move 19 | shape 0, **move 0 -- standing** |
+| 46..140 | shape 39, move 19 | standing |
+
+The one that took the blow stays down because move 19 ends on an `ATTR_LOCK` frame
+(`$54CE`), which `$53BE` then returns on. The other is upright again within half a
+second, well before the referee's sign comes down.
+
+An earlier version of this section said only the struck fighter runs, citing `$51F1` by
+way of `$274A`. That entry belongs to the **bonus stage's** loop at `$3017`, not to state
+2, and taking it for the general case left the attacker frozen mid-kick for the full two
+seconds. `$80` (`T_FREEZE`) is that stage's counter too; state 2's is `$96`.
+
+Miss the `$530F` override and a move still queued when the blow lands repeats for the
+whole of it. `verify_fighter.c` covers that both ways: obeying the stale queue restarts a
+jump kick three times in 24 ticks, imposing `$6131` restarts it none and leaves the
+fighter standing.
 
 ### The CPU opponent (`$3D04`), ported in full
 

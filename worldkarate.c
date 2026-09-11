@@ -114,16 +114,22 @@ static int roundClock;     /* $00DC: the BCD seconds the HUD shows */
 static int tickCounter;    /* $6121: video frames since the last game tick */
 static unsigned frameCount; /* $0014: the clock the blink comes off ($5E68) */
 static int updateParity;   /* $6115: which fighter is driven first this tick */
-/* $00D8 freezes play after a blow. Two things follow, and the port did neither:
- *   - $51F1 runs the state machine for the fighter named by $D1 ONLY, and skips the
- *     joystick read entirely ($51EE is the entry that reads sticks; $274A jumps past
- *     it). The attacker holds its pose.
- *   - $530F's first branch overrides the queued move with $6131 while $D8 is set, so
- *     the struck fighter cannot pick up whatever was last asked for.
- * Without them the attacker kept animating from a queue nothing was refreshing, and a
- * move still queued when the blow landed repeated for the whole freeze -- releasing the
- * keys did nothing, because in that state no key is read. */
-static Fighter* freezeWho;
+/* A scoring blow puts the game in state 2 ($2890: LDA $D8 / STA $D0), and $28F7's loop
+ * runs for $96 = 150 frames driving BOTH fighters ($277A -> $51DC, fighter 1 first).
+ * What holds them still is not that they are left alone: it is $530F's first branch,
+ * which while $00D8 is set overrides the queued move with $6131 -- 0 here ($289D) -- so
+ * whenever a move ends the fighter is put back to stand rather than picking up whatever
+ * was last asked for.
+ *
+ * So the two do NOT hold their poses for the whole of it. Measured on the machine
+ * through one state 2: at frame 9 the struck fighter is in move 19 and the other is
+ * still finishing move 6; by frame 28 that one is standing (shape 0) and stays standing,
+ * while the struck one settles on shape 39 and stays down, because move 19 ends on an
+ * ATTR_LOCK frame.
+ *
+ * An earlier version of this port drove only the struck fighter, on $51F1 -- but that
+ * entry belongs to the BONUS stage's loop at $3017 ($274A jumps past the stick read),
+ * not to state 2, and it left the attacker frozen mid-kick for the full two seconds. */
 static int freezeMove;
 static int speedIndex=GAME_TICK_DEFAULT;  /* $619B: which divider is in use */
 static int clockTick;      /* $6141: frames until the next second */
@@ -395,12 +401,17 @@ static void drawHiScore(void)
         uint8_t pos=(uint8_t)(i+1);                       /* $6017 */
         groundText(row, HS_COL+HS_OFF_POS, &pos, 1, ink);
         if(i==nameRow){
-            /* $5E66: the characters already taken, then the one being chosen, blinking
-             * off $14 -- blank for eight frames in every thirty-two. */
-            groundText(row, HS_COL+HS_OFF_NAME, nameEntry.buf, HS_NAME_LEN, ink);
-            uint8_t cur = (frameCount & 0x18) ? (uint8_t)nameEntry.ch : HUD_CH_SPACE;
-            if(nameEntry.pos < HS_NAME_LEN)
-                groundText(row, HS_COL+HS_OFF_NAME+nameEntry.pos, &cur, 1, ink);
+            /* $5E66/$5E71 write one cell: either the character being chosen or a blank,
+             * blinking off $14 -- eight frames dark in every thirty-two. The cell is
+             * REPLACED, so the dash the row starts with is not underneath it. */
+            for(int k=0;k<HS_NAME_LEN;k++){
+                uint8_t c;
+                if(k==nameEntry.pos)
+                    c = (frameCount & 0x18) ? (uint8_t)nameEntry.ch : HUD_CH_SPACE;
+                else
+                    c = nameEntry.buf[k];
+                groundText(row, HS_COL+HS_OFF_NAME+k, &c, 1, ink);
+            }
         } else
             groundText(row, HS_COL+HS_OFF_NAME, r->name, HS_NAME_LEN, ink);
         if(hsHasBelt(r))                                  /* $6035/$603D */
@@ -500,16 +511,15 @@ static void award(Fighter* a, const HitResult* h)
     /* the game's own wording, off its signs. $613F names the announcement the ROM puts
      * up, but what it indexes has not been established, so the sign is still chosen by
      * the blow's weight rather than by that number. */
-    signShow(h->hit>=2 ? "FULL POINT" : "HALF POINT", T_FREEZE);
+    signShow(h->hit>=2 ? "FULL POINT" : "HALF POINT", T_POINT);
     strcpy(banner, "");
-    gstate=G_POINT; stateTimer=T_FREEZE;          /* $2FEA: 128 frames */
+    gstate=G_POINT; stateTimer=T_POINT;           /* $2903: 150 frames */
     /* $42D8/$28A5: the move forced on the struck fighter comes from $4062, keyed by the
      * strike and the pair of facings -- not from a guess about which side it came from */
     d->queued = h->reaction;
     d->samemove = 0;
-    fgtStartMove(d, h->reaction, rnd);            /* $3011/$2747 */
-    freezeWho = d;                                /* $2FFE */
-    freezeMove = 0;                               /* $6131 is 0 here ($289D/$2D9F) */
+    fgtStartMove(d, h->reaction, rnd);            /* $28A5/$28AB */
+    freezeMove = 0;                               /* $6131 is 0 here ($289D) */
 }
 
 /* ---------------- one frame of a fight ---------------- */
@@ -701,12 +711,13 @@ int main(int argc,char**argv)
                         if(gameTickDue(0)) fightTick(SDL_GetKeyboardState(NULL));
                         break;
                     case G_POINT:
-                        /* $3C01: the divider is longer while play is frozen, and
-                         * $3017's loop drives one fighter, not both */
-                        if(gameTickDue(1) && freezeWho)
-                            fgtUpdate(freezeWho, freezeMove, rnd);
+                        /* $3C01: the divider is longer while $00D8 is set. $51DC drives
+                         * both fighters, the second one first, and runs no AI. */
+                        if(gameTickDue(1)){
+                            fgtUpdate(&p2, freezeMove, rnd);
+                            fgtUpdate(&p1, freezeMove, rnd);
+                        }
                         if(--stateTimer<=0){
-                            freezeWho=NULL;
                             /* $2BA2: four points ends the bout */
                             if(fPoints[0]>=4){
                                 fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,"");

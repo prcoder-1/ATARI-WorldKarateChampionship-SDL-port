@@ -148,7 +148,13 @@ def emit_timing(d):
     t.append("#define T_READY   0x%02X\n" % 0x50)
     t.append("/* $2FA9: hold until the bout is enabled ($615D) */\n")
     t.append("#define T_BEGIN   0x%02X\n" % 0xC8)
-    t.append("/* $2FEA and $3017: the freeze after a point, and after time runs out */\n")
+    t.append("/* $2903: how long the game stays in state 2 after a scoring blow. BOTH\n"
+             " * fighters run for it ($28F7's $277A -> $51DC), so each finishes its move\n"
+             " * and is then put back to stand by $530F, which imposes $6131 while $00D8\n"
+             " * is set. Measured on the machine: the fighter that did not take the blow\n"
+             " * is standing again by frame 28 of the 150. */\n")
+    t.append("#define T_POINT   0x%02X\n" % 0x96)
+    t.append("/* $2FEA and $3017: the bonus stage's own freeze, which drives ONE fighter */\n")
     t.append("#define T_FREEZE  0x%02X\n" % 0x80)
     t.append("/* $2F7C: both fighters are placed at this x when a bout starts */\n")
     t.append("#define T_START_X 0x%02X\n" % 0x54)
