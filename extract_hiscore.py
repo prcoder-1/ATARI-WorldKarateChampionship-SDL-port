@@ -69,7 +69,7 @@ def find_dump():
     for p in DUMPS:
         if os.path.exists(p) and os.path.getsize(p) > 0x6260:
             return p
-    raise SystemExit("no RAM dump holding the table")
+    return None
 
 
 def show(codes):
@@ -89,6 +89,10 @@ def show(codes):
 
 def main():
     path = find_dump()
+    if path is None:
+        # not in this repository -- see README.md
+        print("no RAM dump holding the table -- skipping")
+        return 0
     d = open(path, "rb").read()
 
     header = [(d[HEADER + i] - ASCII_BIAS) & 0xFF for i in range(HEADER_LEN)]

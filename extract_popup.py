@@ -69,7 +69,7 @@ def find_dump():
     for p in DUMPS:
         if os.path.exists(p) and os.path.getsize(p) > 0x4700:
             return p
-    raise SystemExit("no RAM dump holding $467A")
+    return None
 
 
 def glyphs(d):
@@ -148,6 +148,10 @@ def self_check(all_glyphs):
 
 def main():
     path = find_dump()
+    if path is None:
+        # not in this repository -- see README.md
+        print("no RAM dump holding $467A -- skipping")
+        return 0
     d = open(path, "rb").read()
     all_glyphs = glyphs(d)
 

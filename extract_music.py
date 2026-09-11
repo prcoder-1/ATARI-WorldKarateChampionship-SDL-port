@@ -49,7 +49,7 @@ def find_dump():
         got = sorted(glob.glob(pat))
         if got:
             return got[0]
-    raise SystemExit("no RAM dump found")
+    return None
 
 
 def read_until_ff(d, addr, limit=512):
@@ -63,6 +63,10 @@ def read_until_ff(d, addr, limit=512):
 
 def main():
     path = find_dump()
+    if path is None:
+        # not in this repository -- see README.md
+        print("no RAM dump holding the music -- skipping")
+        return 0
     d = open(path, "rb").read()
 
     seqs = [read_until_ff(d, d[SEQ_LO + v] | (d[SEQ_HI + v] << 8)) for v in range(3)]

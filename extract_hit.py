@@ -66,11 +66,15 @@ def find_dump():
         got = sorted(glob.glob(pat))
         if got:
             return got[0]
-    raise SystemExit("no RAM dump found")
+    return None
 
 
 def main():
     path = find_dump()
+    if path is None:
+        # not in this repository -- see README.md
+        print("no RAM dump holding the hit tables -- skipping")
+        return 0
     d = open(path, "rb").read()
     if len(d) < 0x4200:
         raise SystemExit("%s is too short to hold the hit tables" % path)

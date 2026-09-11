@@ -43,7 +43,7 @@ OUT = "generated/sfx.h"
 def find_dumps():
     got = sorted(glob.glob("../extracted/scenes/*.bin"))
     if not got:
-        raise SystemExit("no 64K RAM dump found")
+        return None
     return got
 
 
