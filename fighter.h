@@ -72,11 +72,10 @@ typedef struct {
     int hold;       /* $6185,y  frames spent held on an ATTR_HOLD frame */
     int isHuman;    /* $0050,y  nonzero = joystick, zero = the CPU routine */
     int index;      /* $D2      which fighter this is, 0 or 1       */
-    /* port-side extras, not part of the ROM state */
+    /* port-side extra, not part of the ROM state. The points, the score and the win
+     * count are NOT here: they outlive a bout, and this struct is wiped whenever the
+     * fighters are placed. */
     int isCPU;
-    int points;
-    int score;      /* the HUD's running score */
-    int wins;
 } Fighter;
 
 /* $6114: the fighter an ATTR_TURN frame handed the turn to. $3C2E reads it to order the

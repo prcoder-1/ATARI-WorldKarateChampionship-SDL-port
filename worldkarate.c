@@ -143,6 +143,16 @@ static int boutCount=0;
 /* $2A26: the match runs only while fighter 0 keeps winning. The moment it loses a bout
  * $2A35 sets $6168 to the loser and $D0 to 6, which is the high-score screen. */
 static int boutLost=0;
+/* $00D9/$00DA, $F7..$F9/$FA..$FC and the two-player win markers are MATCH state, not
+ * fighter state. The ROM keeps them well away from the per-fighter record and clears the
+ * scores only when a new match starts ($2C90). The port used to hold them inside Fighter,
+ * where placeFighter's memset wiped them and resetPositions restored the points and the
+ * wins by hand -- but not the score. resetPositions runs after every scoring blow, so the
+ * score went back to zero each time and a match always ended with nothing for the table. */
+static int fPoints[2];   /* $00D9,y */
+static int fScore[2];    /* $F7..$F9 and $FA..$FC */
+static int fWins[2];
+
 /* $5DE0: which row of the table the loser is putting a name into, and the entry
  * itself (hiscore.h). In the original the stick picks the letters and the button
  * takes them; here the movement keys do the picking. */
@@ -414,10 +424,10 @@ static void drawHUD(void)
     /* $5C32/$5C3F: the two digits of $00D3 straight out, already BCD. The belt is no
      * longer passed: $5F66 derives it from the score. */
     hudCompose(hudCells, p1.isHuman, p2.isHuman, demo, roundClock,
-               level, p1.score, p2.score,
-               p1.wins, p2.wins, 0);
+               level, fScore[0], fScore[1],
+               fWins[0], fWins[1], 0);
     hudDraw(hudCells, LW, LH, setpx1);
-    hudMarkers(p1.points, p2.points, p1.isHuman, p2.isHuman, LW, LH, setpx1);
+    hudMarkers(fPoints[0], fPoints[1], p1.isHuman, p2.isHuman, LW, LH, setpx1);
 }
 
 /* ---------------- round / match flow ---------------- */
@@ -431,11 +441,12 @@ static void placeFighter(Fighter* f,int x,int facing,int index)
 
 static void resetPositions(void)
 {
-    int cpu=p2.isCPU, w1=p1.wins, w2=p2.wins, s1=p1.points, s2=p2.points;
-    /* $2F7C places both fighters at $54 */
+    int cpu=p2.isCPU;
+    /* $2F7C places both fighters at $54. Nothing that has to outlive a bout lives in
+     * here any more, so there is nothing to save across the wipe but isCPU. */
     placeFighter(&p1,T_START_X-0x20,0,0);   /* faces right */
     placeFighter(&p2,T_START_X+0x20,1,1);   /* faces left  */
-    p2.isCPU=cpu; p1.wins=w1; p2.wins=w2; p1.points=s1; p2.points=s2;
+    p2.isCPU=cpu;
     /* $0050,y: nonzero = joystick, zero = the CPU routine */
     p1.isHuman=!p1isCPU;
     p2.isHuman=!p2.isCPU;
@@ -448,7 +459,7 @@ static void demoStart(void);
 
 static void newBout(void)
 {
-    p1.points=0; p2.points=0;
+    fPoints[0]=fPoints[1]=0;
     /* $2D27: the level counts BOUTS, in BCD, and saturates rather than wrapping
      * ($2D2E's BCS skips the store). $2D09: the skill rises with it, when
      * (level & 3) == 2, and stops at 5 -- it does not fall back. */
@@ -478,9 +489,10 @@ static int bcd(int v){ return (v >> 4) * 10 + (v & 0x0F); }
 static void award(Fighter* a, const HitResult* h)
 {
     Fighter* d = (a==&p1)?&p2:&p1;
-    a->points += h->hit;                          /* $4508 */
-    if(a->points > HIT_POINTS_MAX) a->points = HIT_POINTS_MAX;   /* $450B */
-    a->score += bcd(h->score) * 100;              /* $4550, in BCD */
+    int who = a->index & 1;
+    fPoints[who] += h->hit;                       /* $4508 */
+    if(fPoints[who] > HIT_POINTS_MAX) fPoints[who] = HIT_POINTS_MAX;   /* $450B */
+    fScore[who] += bcd(h->score) * 100;           /* $4550, in BCD */
     /* $2DFB: LDA $613F / JSR $46F0 / JSR $4660 -- the number and its column, straight
      * from the blow. It is the points scored: 100, 200, 400, 500, 800 or 1600. */
     popupIndex = h->sign;
@@ -596,8 +608,8 @@ static void vblank(void)
         if(roundClock==0){
             gstate=G_ROUND_END; stateTimer=T_BEGIN;
             /* the signs name the fighters by their gi, RED and WHITE */
-            if(p1.points>p2.points){ p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
-            else if(p2.points>p1.points){ p2.wins++; boutLost=1; signShow("RED",T_BEGIN); strcpy(banner,""); }
+            if(fPoints[0]>fPoints[1]){ fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
+            else if(fPoints[1]>fPoints[0]){ fWins[1]++; boutLost=1; signShow("RED",T_BEGIN); strcpy(banner,""); }
             else { signIndex=-1; strcpy(banner,"DRAW"); }
         }
     }
@@ -610,7 +622,7 @@ static void demoStart(void)
     p1isCPU=1; p2isCPU=1; p2.isCPU=1;
     boutLost=0;
     bg=0; boutCount=0; level=0; aiSkill=1;
-    p1.wins=p2.wins=0; p1.score=p2.score=0;
+    fWins[0]=fWins[1]=0; fScore[0]=fScore[1]=0;
     musicOn=1; sfxOn=0; musicPlay(&music);
     popupIndex=-1;
     newBout();
@@ -665,7 +677,7 @@ int main(int argc,char**argv)
                         bg=0;boutCount=0;
                         level=0;
                         if(++aiSkill>=AI_SKILL_MAX) aiSkill=1;
-                        p1.wins=p2.wins=0; p1.score=p2.score=0;
+                        fWins[0]=fWins[1]=0; fScore[0]=fScore[1]=0;
                         p2isCPU=!twoPlayer; p2.isCPU=p2isCPU;
                         /* $3337: both players get $50/$51, effects on, music off */
                         sfxOn=1; musicOn=0; musicStop(&music);
@@ -696,11 +708,11 @@ int main(int argc,char**argv)
                         if(--stateTimer<=0){
                             freezeWho=NULL;
                             /* $2BA2: four points ends the bout */
-                            if(p1.points>=4){
-                                p1.wins++; signShow("WHITE",T_BEGIN); strcpy(banner,"");
+                            if(fPoints[0]>=4){
+                                fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,"");
                                 gstate=G_ROUND_END; stateTimer=T_BEGIN;
-                            } else if(p2.points>=4){
-                                p2.wins++; boutLost=1;
+                            } else if(fPoints[1]>=4){
+                                fWins[1]++; boutLost=1;
                                 signShow("RED",T_BEGIN); strcpy(banner,"");
                                 gstate=G_ROUND_END; stateTimer=T_BEGIN;
                             }
@@ -727,7 +739,8 @@ int main(int argc,char**argv)
                             /* $5CC7..$5CEA: the finished score goes in as the candidate,
                              * and if it places, $5DE0 lets the loser put a name in the
                              * row it took. */
-                            int sc = p1isCPU ? p2.score : p1.score;
+                            /* $5CBE: the loser's score, and the loser is fighter 0 */
+                            int sc = fScore[0];
                             nameRow = hsSubmit(sc, hudBelt(sc), HS_START[0].name);
                             if(nameRow >= 0 && !p1isCPU){
                                 hsNameBegin(&nameEntry, HS_START[0].name);
