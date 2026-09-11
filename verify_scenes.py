@@ -10,6 +10,7 @@ screen capture and compares pixel by pixel. Zero differences means the chain
 
 holds for every scene.
 """
+import os
 import sys
 
 import invert_palette as ip
@@ -30,6 +31,11 @@ def main():
     for i in range(SCENES):
         shot = "../extracted/scenes/scene%d_f1.png" % i
         dump = shot[:-4] + ".bin"
+        if not (os.path.exists(shot) and os.path.exists(dump)):
+            # The game's own data is not in this repository; capture_scenes.sh makes
+            # these. See README.md.
+            print("no scene captures present -- run capture_scenes.sh first; skipping")
+            return 0
         px, W, H = ip.load_frame(shot)
         values = ip.pixel_values(open(dump, "rb").read())
         _score, off = ip.find_alignment(values, px, W, H)

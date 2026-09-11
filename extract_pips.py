@@ -138,8 +138,10 @@ def main():
 
     src, starts, patterns = load_point_table()
     if patterns is None:
-        print("no RAM dump holding $44AE; refusing to emit")
-        return 1
+        # The game's own data is not in this repository; harvest_v2.sh makes a dump.
+        # See README.md.
+        print("no RAM dump holding $44AE -- skipping")
+        return 0
     print("point patterns from %s, $44A7 starts %s" % (src, starts))
 
     W, H = 8, 5

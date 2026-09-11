@@ -4,6 +4,28 @@ A C/SDL2 port of the Atari 8-bit game whose **logic is the original's**, ported 
 6502, and whose graphics are the original's own data. See `REVERSE_ENGINEERING.md` for
 how the game works and what maps to what.
 
+## The game itself is not in this repository
+
+The disk image, the dumps taken off it and the emulator snapshot are verbatim copies of a
+commercial program — *World Karate Championship*, Datasoft, 1984 — and are not here.
+Bring your own if you want to re-derive anything:
+
+| put here | what it is | made by |
+|---|---|---|
+| `World Karate Championship.atr` (repo root) | the disk image | — |
+| `extracted/ram_true_64k.bin` | a 64K RAM dump of the running game | the emulator's monitor |
+| `extracted/scenes/*.bin` | per-scene RAM dumps | `port/capture_scenes.sh` |
+| `extracted/colour4/`, `extracted/signs/`, … | screen captures | `port/harvest_v2.sh`, `port/harvest_signs.sh` |
+
+**The port builds and runs without any of it** — everything under `port/generated/` is
+committed. What needs the originals is re-running the extractors and the parts of
+`make verify` that compare against the real machine; those skip with a message when the
+data is absent rather than failing.
+
+Note that `port/generated/` still holds the game's own sprites, scenes, music and tables.
+This is not a clean-room reimplementation; see the note at the end of this file before
+redistributing anything.
+
 The fighter state machine is the game's: a fighter's state is an index into its 120-plus
 animation frames, and `FRAME_ATTR` / `FRAME_VELX` / `FRAME_SHAPE` drive everything. There
 is no invented move table, no tuned durations, and no jump physics — the original has
@@ -12,8 +34,8 @@ main loop takes a tick only every sixth frame ($3BF9), so the fighters move at a
 10 Hz while everything else stays at 60. The CPU opponent is the original's too: `$3D04`
 ported branch for branch, driven by its own decision tables and skill levels. So is the
 background music, and the bout's timings: the ready and freeze holds are the ROM's frame
-counts, and the round is measured the way the original measures it — in referee
-traversals, 8, 15 or 20 of them depending on the round.
+counts, and a bout runs until the clock `$00DC` reaches zero or a fighter has four
+points — which is what `$2BA2` tests, and the only thing that ends one.
 
 Sound is the original's too, and there are two sources that take turns. The music is a
 three-voice POKEY tune; the effects are six **digitised samples** played from a timer
