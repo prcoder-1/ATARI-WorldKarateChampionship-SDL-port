@@ -41,11 +41,18 @@
 #include "generated/timing.h"     /* the bout's frame counts, from $2F5F..$3029       */
 
 /* ------- the logical screen is the Atari frame -------
- * 384 colour clocks by 240 scanlines. SCALE is how many window pixels one of those
- * units becomes, and it is the only place the output size is decided: everything below
- * draws in Atari units and fillrect() multiplies. Each unit is emitted as a solid
- * SDL_RenderFillRect on integer boundaries, so there is no filtering or resampling at
- * any scale -- one unit is a hard-edged SCALE x SCALE block. */
+ * 384 colour clocks by 240 scanlines. Everything below draws in those units into FB, a
+ * plain array of one pixel per unit; once a frame FB goes up as a single texture, scaled
+ * by SCALE with nearest-neighbour sampling. So there is no filtering or resampling at any
+ * scale -- one unit is a hard-edged SCALE x SCALE block -- and SCALE is still the only
+ * place the output size is decided.
+ *
+ * This used to emit one SDL_RenderFillRect per unit. That is 92160 of them for the
+ * background alone, around 125000 a frame with the sprites and the text on top, and it
+ * crashed: on a machine where libSDL2 is sdl2-compat over SDL3, the Vulkan renderer wants
+ * a 16MB vertex buffer for a batch that size, and when the mapping fails it memmoves to
+ * the null pointer it got back instead of checking. The crash was SDL's, the 16MB was
+ * ours. */
 #define LW 384
 #define LH 240
 #define SCALE 4
@@ -210,8 +217,26 @@ static unsigned rnd(void){ rng=rng*1103515245u+12345u; return (rng>>16)&0x7fff; 
 #define NSCENES BG_SCENE_COUNT
 
 static SDL_Renderer* R;
-static void setcol(Col c){ SDL_SetRenderDrawColor(R,c.r,c.g,c.b,255); }
-static void fillrect(int x,int y,int w,int h){ SDL_Rect r={x*SCALE,y*SCALE,w*SCALE,h*SCALE}; SDL_RenderFillRect(R,&r);}
+static SDL_Texture*  FBTEX;              /* FB, uploaded once a frame */
+static Uint32        FB[LW*LH];          /* ARGB8888, host order */
+static Uint32        FBCOL = 0xFF000000; /* what setcol last chose */
+
+static void setcol(Col c){ FBCOL = 0xFF000000u|((Uint32)c.r<<16)|((Uint32)c.g<<8)|(Uint32)c.b; }
+
+/* Clipped, because the renderer used to do it for us and a write past FB would be a real
+ * overrun rather than a dropped pixel. */
+static void fillrect(int x,int y,int w,int h)
+{
+    if(x<0){ w+=x; x=0; }
+    if(y<0){ h+=y; y=0; }
+    if(x>=LW||y>=LH) return;
+    if(x+w>LW) w=LW-x;
+    if(y+h>LH) h=LH-y;
+    for(int j=0;j<h;j++){
+        Uint32* row=FB+(size_t)(y+j)*LW+x;
+        for(int i=0;i<w;i++) row[i]=FBCOL;
+    }
+}
 static void setpx1(int x,int y,int r,int g,int b){ setcol(rgb((Uint8)r,(Uint8)g,(Uint8)b)); fillrect(x,y,1,1); }
 
 /* ---------------- backgrounds ---------------- */
@@ -649,6 +674,9 @@ int main(int argc,char**argv)
         SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,WINW,WINH,0);
     R=SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);
     if(!R){ SDL_Log("renderer: %s",SDL_GetError()); return 1; }
+    FBTEX=SDL_CreateTexture(R,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,LW,LH);
+    if(!FBTEX){ SDL_Log("texture: %s",SDL_GetError()); return 1; }
+    SDL_SetTextureScaleMode(FBTEX,SDL_ScaleModeNearest);   /* 2x2 blocks, no interpolation */
 
     SDL_AudioSpec want,have; SDL_zero(want);
     want.freq=SR; want.format=AUDIO_S16SYS; want.channels=1; want.samples=512; want.callback=audioCB;
@@ -825,9 +853,12 @@ int main(int argc,char**argv)
         }
         if(paused) drawTextC(110,"PAUSED",rgb(255,255,255));
 
+        SDL_UpdateTexture(FBTEX,NULL,FB,LW*(int)sizeof(Uint32));
+        SDL_RenderCopy(R,FBTEX,NULL,NULL);
         SDL_RenderPresent(R);
     }
     if(audio) SDL_CloseAudioDevice(audio);
+    SDL_DestroyTexture(FBTEX);
     SDL_DestroyRenderer(R); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
 }
