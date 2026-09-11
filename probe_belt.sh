@@ -12,7 +12,8 @@
 # Usage: [DISP=:95] probe_belt.sh   -> extracted/beltprobe/bNN.bin, one byte each
 set -u
 DISP="${DISP:-:95}"
-DIR="/home/prcoder/claude-experiments/WorldKarate"
+# the repository root, wherever this script happens to live
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$DIR/extracted/beltprobe"; mkdir -p "$OUT"; rm -f "$OUT"/*.bin
 FIFO=/tmp/a8belt; rm -f "$FIFO"; mkfifo "$FIFO"
 cd "$DIR"

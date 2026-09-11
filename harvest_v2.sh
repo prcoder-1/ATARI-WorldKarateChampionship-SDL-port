@@ -16,7 +16,8 @@ set -u
 # DISP: X display to drive. Xvfb :99 is shared and has been seen to wedge; use a
 # private display by default and start it if it is not up.
 DISP="${DISP:-:95}"
-DIR="/home/prcoder/claude-experiments/WorldKarate"
+# the repository root, wherever this script happens to live
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$DIR/extracted/harvest2}"
 mkdir -p "$OUT"
 # Must be absolute: the emulator's monitor resolves WRITE paths from ITS OWN working
