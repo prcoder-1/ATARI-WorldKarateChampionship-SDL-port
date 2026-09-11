@@ -106,8 +106,10 @@ def main():
     for d in CAPTURES:
         shots += sorted(glob.glob(os.path.join(d, "*.png")))
     if not shots:
-        print("no captures present; skipping")
-        return 1
+        # Not a failure: the captures are not in this repository (see README.md), and the
+        # emitted table is, so a clean clone skips this check the way the others do.
+        print("no captures present -- run harvest_v2.sh first; skipping")
+        return 0
 
     shapes = collections.Counter()
     layouts = collections.Counter()
