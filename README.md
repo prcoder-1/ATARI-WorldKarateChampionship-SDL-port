@@ -49,7 +49,7 @@ make
 | **Player 2** | Arrow keys | `Right Shift` |
 
 `F1` START — one player against the computer · `F2` SELECT — two players
-`M` music · `N` sound effects · `P` pause · `Esc` quit
+`M` music · `N` sound effects · `P` pause · `F10` quit
 
 `F1` and `F2` stand in for the console keys the original reads from `CONSOL`.
 

@@ -16,7 +16,7 @@
  * Controls
  *   Player 1 : W/A/S/D,  Left Shift = fire (attack modifier)
  *   Player 2 : Arrow keys, Right Shift = fire  (or CPU, toggle with C)
- *   Space = start / next,  P = pause,  Esc = quit
+ *   Space = start / next,  P = pause,  F10 = quit
  */
 #include <SDL2/SDL.h>
 #include <stdio.h>
@@ -671,7 +671,7 @@ int main(int argc,char**argv)
             if(e.type==SDL_QUIT) run=false;
             if(e.type==SDL_KEYDOWN){
                 SDL_Keycode kc=e.key.keysym.sym;
-                if(kc==SDLK_ESCAPE) run=false;
+                if(kc==SDLK_F10) run=false;
                 if(kc==SDLK_p) paused=!paused;
                 /* the original's toggles: KBCODE $2D/$AD music on/off, $3E/$BE
                  * effects on/off -- unshifted enables, shifted disables */
@@ -805,7 +805,7 @@ int main(int argc,char**argv)
             if(gstate==G_INTRO){
                 static const Col c={SHAPE_COL_GI_WHITE};
                 groundTextC(0,"F1 ONE PLAYER    F2 TWO PLAYERS",c);
-                groundTextC(1,"M MUSIC  N EFFECTS  P PAUSE  ESC QUIT",c);
+                groundTextC(1,"M MUSIC  N EFFECTS  P PAUSE  F10 QUIT",c);
                 groundTextC(2,"P1 WASD LSHIFT   P2 ARROWS RSHIFT",c);
             }
         } else {
