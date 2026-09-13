@@ -499,6 +499,12 @@ static void resetPositions(void)
     if(!(p1.isHuman && p2.isHuman) || roundClock >= T_BOW_2P_CLOCK){
         fgtStartMove(&p1, MOVE_BOW, rnd);
         fgtStartMove(&p2, MOVE_BOW, rnd);
+        /* $2DD7: LDA #$00 / STA $00EC,Y -- the request is cleared the instant $530F has
+         * taken it. Leaving it standing makes the fighter bow again every time the move
+         * runs out, which is what happened: the computer, whose AI leaves the request
+         * alone when it decides to do nothing, bowed without stopping. Captured on the
+         * machine, the bow is over by the third frame after the reset. */
+        p1.queued = p2.queued = 0;
     }
 }
 

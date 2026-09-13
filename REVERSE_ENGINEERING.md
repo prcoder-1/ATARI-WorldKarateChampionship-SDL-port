@@ -724,11 +724,62 @@ blow (`$290E`) — hands both fighters move `$1C`:
 2DC8: LDA $DC / CMP #$60 / BCS       yes: only while the clock is still full
 2DCE: LDX #$00                       otherwise just stand
 2DD1: STA $00EC,Y / JSR $2783      $530F starts it
+2DD7: LDA #$00 / STA $00EC,Y       and the request is cleared at once
 ```
 
 So in a one-player game they bow at the start of every bout and again after every scoring
 blow; with two people playing, only when the clock has not started running. `$3981` holds
 the clock while fighter 0 is in move `$1C`, so the ceremony does not eat the bout.
+
+That last store matters. `$00EC,Y` is the requested move and `$530F` only reads it, so
+leaving it standing makes the fighter bow again every time the move runs out. The port
+did leave it standing, and the computer — whose AI leaves the request alone when it
+decides to do nothing — bowed without stopping, while the person's stick overwrote it
+every frame and hid the same bug on that side. Captured on the machine, the real bow is
+over by the third frame after the reset.
+
+### Shape 48 was never captured, and its offset threw the fighter across the screen
+
+The upright half of the bow. Its entry in `shapes_pm.h` came out **byte for byte the
+stand**, at the same width, height and top scanline, but with `x0` 28 colour clocks
+adrift — and nothing used it until the port started drawing the bow, at which point the
+fighter jumped half a body width whenever the pose came up.
+
+Two shapes cannot honestly share a bitmap: `$4D30` reads a segment count out of `$6BC0`
+for whatever is in `$00DD` — 34 for the stand, 15 for shape 48 — and walks that many, so
+different ids compose different figures. An identical capture means the poked id never
+took and what was recorded is whatever the fighter was already doing.
+
+Which of the two the offset belongs to is settled inside the captures themselves. Each
+frame holds *both* fighters: `x0` is measured from the right-hand one, and the mirror
+constant `K` from the left. Recomputing `K` per capture with the old value in place:
+
+    K =  16    108 captures, every shape
+    K = -12      2 captures, shape 48 alone
+
+The two frames that disagree are shape 48's, and they are out by the same 28. The
+left-hand fighter in those very frames puts the pose where `x0 = -4` puts it, so the
+right-hand measurement is the wrong one. Tying the copy to the shape its bitmap belongs
+to takes the mirror vote from 107 of 109 to **109 of 109** — independent confirmation,
+since nothing about that vote was being repaired.
+
+`extract_sprites.py` now refuses to pass such a copy on. It picks the owner by `$5384`:
+across the poses that came out cleanly the drawn width is one more than it, so the stand
+is 23 against 24 and matches while shape 48 is 20 against the same 24 and does not. The
+substitution is named in the emitted header, `verify_sprites.py` leaves that shape out of
+the pixel comparison — re-rendering it over the captures that got it wrong could only
+reproduce the error — and `verify-fighter` checks the invariant directly: shapes that
+share a bitmap share its placement.
+
+**Still not measured.** What shape 48 actually looks like is unknown. The port draws the
+stand for it, which is what the pose is in outline — the bow is stand, bend, stand — but
+that is a substitution, not a capture. Getting it properly needs the game driven into the
+pose rather than `$00DD` poked at it. `probe_bow.sh` starts a real bow through `$2D89` and
+takes the screen and the RAM together while the emulator is held; what defeated three
+attempts at the upright half is that the monitor cannot stop the machine finely enough to
+land on a chosen tick, and freezing the frame counter (`$53FF`/`$54E9`) kills the
+emulator. The bent half, shape 49, *was* caught this way and measures `x0 = +12`, exactly
+what the table already had.
 
 **After.** The winner is not driven through the move — he is posed by hand, his shape
 written straight into `$00DD,X`, and each pose steps him back one:

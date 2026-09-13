@@ -168,6 +168,57 @@ def artifacts(all_cands, min_shapes=3):
             if len(ids) >= min_shapes and k[0][1] <= ONE_PLAYER_PX}
 
 
+def dedupe(poses, weight, widths):
+    """Two shapes cannot honestly share a bitmap, so when they do, one was never caught.
+
+    The compositor at $4D30 reads a segment count out of $6BC0 for whatever is in $00DD
+    -- 34 for shape 0, 15 for shape 48 -- and walks that many segments, so different
+    shape ids compose different figures. An identical capture therefore means the poked
+    id never took and what was recorded is whatever the fighter was already doing.
+
+    That is what happened to shape 48, the upright half of the bow: it came out byte for
+    byte the stand, with the stand's ink but an xoff 28 clocks adrift, because the dump it
+    was measured against had the fighter somewhere else by then. Nothing noticed until the
+    port started drawing the bow, and then the fighter jumped half a body width every time
+    the pose came up.
+
+    Rather than pass the bad geometry on, the copy is tied to the shape the capture really
+    belongs to -- the one more captures agree on. The pose is then not measured, which the
+    caller says out loud and the emitted header records. Fixing it properly needs a
+    harvest that drives the game into the pose instead of poking $00DD (probe_bow.sh
+    starts one), and the check below is what will notice if it ever comes back.
+    """
+    bybits = {}
+    for s, (g, _ytop, _xoff) in poses.items():
+        bybits.setdefault(g.tobytes(), []).append(s)
+    aliased = []
+    for group in bybits.values():
+        if len(group) < 2:
+            continue
+        # Which of them the bitmap belongs to is decided by the ROM, not by how many
+        # captures agree -- both counts are small and the wrong one can win. $5384 is the
+        # arena-clamp width rather than the drawn one, but across the poses that came out
+        # cleanly the drawn width is one more than it, so it identifies the owner: the
+        # stand is 23 -> 24 and matches, shape 48 is 20 against the same 24 and does not.
+        def owns(s):
+            w = poses[s][0].shape[1]
+            return 1 if widths and widths[s] + 1 == w else 0
+        group.sort(key=lambda s: (-owns(s), -weight.get(s, 0), s))
+        keep = group[0]
+        if not owns(keep):
+            print("shapes %s share a bitmap and $5384 does not say whose it is; "
+                  "going by the captures" % group)
+        for s in group[1:]:
+            poses[s] = poses[keep]
+            aliased.append((s, keep))
+            print("shape %2d is byte for byte shape %2d (%d captures against %d): the poke "
+                  "never took, so it is NOT a measurement of that pose -- tied to shape %d"
+                  % (s, keep, weight.get(s, 0), weight.get(keep, 0), keep))
+    if not aliased:
+        print("no two shapes share a bitmap")
+    return aliased
+
+
 def pick(shape, cands, bad):
     """Best attempt for one shape: the pose the most captures agree on.
 
@@ -266,7 +317,7 @@ def main():
         print("   %dx%d, seen under several different shape ids" % (shp[1], shp[0]))
     print()
 
-    poses, missing = {}, []
+    poses, missing, weight = {}, [], {}
     for s in ids:
         got = pick(s, all_cands[s], bad)
         if got is None:
@@ -275,10 +326,12 @@ def main():
         grid, src, agree, n, ytop, xoff = got
         # store facing right; the captured fighter (its $E3 is 1) faces left
         poses[s] = (grid[:, ::-1].copy(), ytop, xoff)
+        weight[s] = agree
         print("shape %2d  %2dx%-2d px (ROM w=%2d) top=%3d xoff=%+d  %d/%d agree  %s"
               % (s, grid.shape[1], grid.shape[0], widths[s] if widths else 0,
                  ytop, xoff, agree, n, src))
     print("\nrecovered %d poses; missing %s" % (len(poses), missing or "none"))
+    aliases = dedupe(poses, weight, widths)
     mirror, votes = measure_mirror(poses)
     print("mirror constant K (ink offset facing right = K - x0 - 2*width): %s"
           % ("%d clocks, %d of %d captures agree"
@@ -286,7 +339,7 @@ def main():
              else "not measurable from these captures"))
     if poses:
         atlas(poses)
-        emit(poses, mirror=mirror)
+        emit(poses, mirror=mirror, aliases=aliases)
     return poses
 
 
@@ -309,7 +362,7 @@ def atlas(poses, path="screenshots/shape_atlas_colour.png", scale=3):
     print("wrote", path)
 
 
-def emit(poses, path="generated/shapes_pm.h", mirror=None):
+def emit(poses, aliases=(), path="generated/shapes_pm.h", mirror=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     out = []
     out.append("/* shapes_pm.h - the game's own fighter poses, in colour.\n"
@@ -322,7 +375,18 @@ def emit(poses, path="generated/shapes_pm.h", mirror=None):
                " * Pixels are colour INDICES, not colours: 0 = transparent, 1 = gi, 2 = skin,\n"
                " * 3 = outline. The gi colour differs per fighter, so the port supplies it.\n"
                " * Indexed by the game's own shape id, so FRAME_SHAPE[] indexes this directly.\n"
-               " * GENERATED FILE - do not edit; re-run extract_sprites.py instead. */\n")
+               )
+    for s, keep in aliases:
+        out.append(" *\n"
+                   " * NOT MEASURED: shape %d. Its capture came back byte for byte shape %d's,\n"
+                   " * which means the poked id never took -- $4D30 walks a different segment\n"
+                   " * count for each ($6BC0), so two ids cannot compose the same figure. It\n"
+                   " * carries shape %d's bitmap and geometry rather than the bad offset the\n"
+                   " * capture measured, which was 28 clocks adrift and threw the fighter half a\n"
+                   " * body width across the screen whenever the pose came up. To do it properly\n"
+                   " * the game has to be driven into the pose instead of poked; probe_bow.sh\n"
+                   " * starts that.\n" % (s, keep, keep))
+    out.append(" * GENERATED FILE - do not edit; re-run extract_sprites.py instead. */\n")
     out.append("#ifndef SHAPES_PM_H\n#define SHAPES_PM_H\n#include <stdint.h>\n")
     out.append("#define SHAPE_COUNT %d\n" % NSHAPES)
     out.append("#define SHAPE_IDX_GI 1\n#define SHAPE_IDX_SKIN 2\n#define SHAPE_IDX_OUTLINE 3\n")
@@ -343,6 +407,12 @@ def emit(poses, path="generated/shapes_pm.h", mirror=None):
                    " * starts at SHAPE_MIRROR_CLOCKS - x0 - 2*w from the origin. Measured\n"
                    " * from the left-hand fighter, which faces right. */\n")
         out.append("#define SHAPE_MIRROR_CLOCKS %d\n" % mirror)
+    out.append("/* Shapes whose capture was not of them (see the note at the top): they carry\n"
+               " * the geometry of the shape the bitmap belongs to, so their own captures are\n"
+               " * not evidence about them and verify_sprites.py leaves them alone. */\n")
+    out.append("#define SHAPE_ALIASED_COUNT %d\n" % len(aliases))
+    out.append("static const uint8_t SHAPE_ALIASED[%d]={%s};\n"
+               % (max(1, len(aliases)), ",".join(str(s) for s, _ in aliases) or "255"))
     out.append("typedef struct { uint8_t w, h, y0; int8_t x0; const uint8_t* px; } ShapePM;\n")
     for s in sorted(poses):
         g = poses[s][0]

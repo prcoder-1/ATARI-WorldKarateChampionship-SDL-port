@@ -14,6 +14,7 @@
 #include "ai.h"
 #include "generated/timing.h"
 #include "generated/pips.h"
+#include "generated/shapes_pm.h"
 #include "hud.h"
 #include "hiscore.h"
 
@@ -726,6 +727,33 @@ int main(void)
               "$29D2: it starts from the pose the winner returns to");
         check(SHAPE_BOUT_END == SHAPE_BOW_UP,
               "$292F stands both fighters in that same pose");
+
+        /* No two shapes may carry the same bitmap at different geometry. $4D30 walks a
+         * different segment count per shape ($6BC0), so an identical bitmap means one of
+         * them was never captured -- and if the two are then placed differently, the
+         * fighter jumps whenever the animation crosses between them. That is exactly
+         * what shape 48 did: it held the stand's bitmap with an offset 28 clocks adrift,
+         * and the fighter shot half a body width sideways for the upright half of every
+         * bow. extract_sprites.py ties such a copy to the shape the bitmap belongs to. */
+        int clash = 0, twins = 0;
+        for (int a = 0; a < SHAPE_COUNT; a++) {
+            const ShapePM* p = &SHAPE_PM[a];
+            if (!p->h || !p->px) continue;
+            for (int b = a + 1; b < SHAPE_COUNT; b++) {
+                const ShapePM* q = &SHAPE_PM[b];
+                if (!q->h || !q->px) continue;
+                if (p->w != q->w || p->h != q->h) continue;
+                if (memcmp(p->px, q->px, (size_t)p->w * p->h)) continue;
+                twins++;
+                if (p->x0 != q->x0 || p->y0 != q->y0) {
+                    printf("    shapes %d and %d are the same bitmap at (%d,%d) and (%d,%d)\n",
+                           a, b, p->x0, p->y0, q->x0, q->y0);
+                    clash++;
+                }
+            }
+        }
+        printf("    %d pair(s) of shapes share a bitmap\n", twins);
+        check(clash == 0, "shapes that share a bitmap share its placement");
 
         /* and it has to finish by itself, like any other move */
         Fighter f;

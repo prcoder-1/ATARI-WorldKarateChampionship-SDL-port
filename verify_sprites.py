@@ -142,8 +142,19 @@ def shows_another_pose(poses, sid, results, mirror, gi, who):
     return None
 
 
+def aliased(path=HEADER):
+    """Shapes extract_sprites.py had to tie to another because their capture was not of
+    them. Those captures are the bad measurement itself, so re-rendering the emitted pose
+    over them can only reproduce the error -- see the note at the top of the header."""
+    m = re.search(r"SHAPE_ALIASED\[\d+\]=\{([^}]*)\}", open(path).read())
+    if not m:
+        return set()
+    return {int(v) for v in m.group(1).split(",") if v.strip() and int(v) != 255}
+
+
 def main():
     poses = load_poses()
+    skip = aliased()
     shots = []
     for d in CAPTURES:
         shots += sorted(glob.glob(os.path.join(d, "s_*.png")))
@@ -161,7 +172,7 @@ def main():
         if not m:
             continue
         sid = int(m.group(1), 16)
-        if sid not in poses:
+        if sid not in poses or sid in skip:
             continue
         dump = shot[:-4] + ".bin"
         if not os.path.exists(dump):
@@ -217,6 +228,9 @@ def main():
                   % (sid, instead))
         print()
 
+    for sid in sorted(skip):
+        print("shape %d is not checked: its own captures are what got it wrong, so the "
+              "geometry it carries is another shape's and they cannot agree" % sid)
     print("%s (%d shape/facing combinations differ)"
           % ("FAILURES" if failed else "every pose reproduces the original exactly",
              failed))
