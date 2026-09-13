@@ -621,6 +621,79 @@ int main(void)
         check(lo == 0 && hi == 11, "and covers the whole range");
     }
 
+    printf("the wall clamp works in bytes, the way $550E does\n");
+    {
+        /* $5D and $5E are single bytes. A fighter who steps past zero has an x around
+         * $F5, and the ROM's $5E is ($F5 + $24) & $FF = $19 -- under $AE, so the
+         * right-hand test does not fire and he is put back against the LEFT wall. Held
+         * in full width $5E is 281, the right-hand test fires, and he is thrown to the
+         * far side. That was a real teleport: 0 -> 138 in one tick, the fighter vanishing
+         * off one edge and reappearing at the other. */
+        int wrong = 0, worst = 0, hi = -1, lo = 999;
+        for (int frame = 0; frame < NUM_FRAMES; frame++) {
+            for (int facing = 0; facing < 2; facing++) {
+                for (int back = 0; back < 2; back++) {
+                    for (int x = ARENA_LEFT; x <= ARENA_RIGHT; x++) {
+                        Fighter g;
+                        memset(&g, 0, sizeof g);
+                        g.x = x; g.facing = facing;
+                        g.frame = g.next = frame;
+                        g.shape = FRAME_SHAPE[frame];
+                        fgtApplyVelDir(&g, back);
+                        if (g.x > hi) hi = g.x;
+                        if (g.x < lo) lo = g.x;
+                        if (g.x > ARENA_RIGHT) wrong++;
+                        /* only positions the game can actually be in are asked to hold
+                           still: an x outside the arena is the caller's fault, not the
+                           clamp's, and the ROM pulls it to a wall from either side */
+                        if (x >= ARENA_LEFT && x <= ARENA_RIGHT) {
+                            int d = g.x - x;
+                            if (d < 0) d = -d;
+                            if (d > worst) worst = d;
+                        }
+                    }
+                }
+            }
+        }
+        printf("    over every frame, facing and x: lands in %d..%d, "
+               "moves at most %d in a tick\n", lo, hi, worst);
+        check(wrong == 0, "$5564: nothing is ever left past the right wall");
+        check(worst <= 40, "and no single step crosses the arena");
+
+        /* the case itself: stepping off the left edge must come back at the left.
+         *
+         * From below the arena there is one combination the ROM does not catch either --
+         * x of 3 or less taking the reverse path on frame 67, the fastest step in the
+         * table at +25, which lands on 231. $5580 only rescues $F0 and above, so 231
+         * slips under the original's own guard. It stays in because it is the ROM's
+         * arithmetic, and it does not arise: 180 million ticks of randomised play never
+         * put a fighter past 159. Hence the sweep starting at the wall rather than at 0. */
+        int flung = 0, tried = 0;
+        for (int frame = 0; frame < NUM_FRAMES; frame++) {
+            for (int facing = 0; facing < 2; facing++) {
+                for (int back = 0; back < 2; back++) {
+                    for (int x = ARENA_LEFT; x < ARENA_LEFT + 8; x++) {
+                        Fighter g;
+                        memset(&g, 0, sizeof g);
+                        g.x = x; g.facing = facing;
+                        g.frame = g.next = frame;
+                        g.shape = FRAME_SHAPE[frame];
+                        int v = (int)(int8_t)FRAME_VELX[frame];
+                        int steps = back ? -v : v;
+                        if (x + steps >= 0) continue;    /* no underflow, not this case */
+                        tried++;
+                        fgtApplyVelDir(&g, back);
+                        if (g.x > 0x40) flung++;
+                    }
+                }
+            }
+        }
+        printf("    %d of %d steps that run past zero come back on the right side\n",
+               flung, tried);
+        check(tried > 0, "the sweep really does step past zero somewhere");
+        check(flung == 0, "$553E: a step past zero is caught by the LEFT wall");
+    }
+
     printf("the belt's colour ($5FA5)\n");
     {
         int fixed = 0;

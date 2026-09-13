@@ -738,6 +738,35 @@ decides to do nothing — bowed without stopping, while the person's stick overw
 every frame and hid the same bug on that side. Captured on the machine, the real bow is
 over by the third frame after the reset.
 
+### The wall clamp works in bytes ($550E)
+
+`$5D` and `$5E` — the left and right edges the clamp tests — are single bytes, and every
+step to them is an 8-bit add or subtract on the accumulator:
+
+```
+5510: LDA $00E0,Y / SBC $5679,X / STA $00E0,Y   x -= velx        (back path)
+551D: CLC / ADC #$24 / STA $5E                  right = x + $24  (8-bit)
+5522: SEC / SBC $5384,X / STA $5D               left  = right - w
+552A: LDA $00E0,Y / ADC $5679,X / STA $5D       left  = x        (forward path)
+5539: CLC / ADC $5384,X / STA $5E               right = left + w
+553E: LDA #$10 / CMP $5D / BCC $5564            $10 >= left  -> the left wall
+5564: LDA #$AE / CMP $5E / BCS $5580            $AE <  right -> the right wall
+5580: LDA $00E0,Y / CMP #$F0 / BCC              and x >= $F0 is zeroed
+```
+
+The wrap is what makes the walls work. A fighter who steps past zero has an x around
+`$F5`, and his `$5E` is `($F5 + $24) & $FF = $19` — under `$AE`, so the right-hand test
+does not fire, `$5D` comes out low and the LEFT one does: he is put back against the left
+wall. The port held `$5D` and `$5E` in full width, so `$5E` came out as 281, the
+right-hand test fired instead, and `$556F`/`$557B` threw him clear across the arena to
+`$AE - w` or `$8A`. From x = 0 to x = 138 in a single tick — the fighter left one edge of
+the screen and reappeared at the other.
+
+One combination survives the fix because the ROM does not catch it either: x of 3 or less
+taking the reverse path on frame 67, whose `+25` is the fastest step in the table, lands
+on 231, and `$5580` only rescues `$F0` and above. It is the original's own arithmetic and
+it is left alone; 180 million ticks of randomised play never put a fighter past 159.
+
 ### Shape 48 was never captured, and its offset threw the fighter across the screen
 
 The upright half of the bow. Its entry in `shapes_pm.h` came out **byte for byte the

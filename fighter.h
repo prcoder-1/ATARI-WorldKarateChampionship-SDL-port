@@ -123,14 +123,21 @@ static void fgtApplyVelDir(Fighter* f, int back)
     int w = SHAPE_WIDTH[f->shape % NUM_SHAPES];
     int left, right;
 
+    /* $5D and $5E are single bytes and every step to them is an 8-bit add or subtract on
+     * the accumulator, so they wrap. That matters at the walls: a fighter who steps past
+     * zero has an x of $F5 or so, and the ROM reads its $5E as ($F5 + $24) & $FF = $19,
+     * which is under $AE, so the right-hand test does not fire and the LEFT one does --
+     * he is put back against the left wall. Held in full width instead, $5E comes out as
+     * 281, the right-hand test fires, and the fighter is thrown clear across the arena to
+     * $8A or $AE-w. That was the teleport: jump into a wall and reappear on the far side. */
     if (back) {                                    /* $5510 */
         f->x = (f->x - v) & 0xFF;
-        right = f->x + 0x24;                       /* $551D */
-        left  = right - w;                         /* $5522 */
+        right = (f->x + 0x24) & 0xFF;              /* $551D -> $5E */
+        left  = (right - w) & 0xFF;                /* $5522 -> $5D */
     } else {                                       /* $552A */
         f->x = (f->x + v) & 0xFF;
-        left  = f->x;
-        right = left + w;                          /* $5539 */
+        left  = f->x;                              /* $5534 -> $5D */
+        right = (left + w) & 0xFF;                 /* $5539 -> $5E */
     }
 
     if (ARENA_LEFT >= left) {                      /* $553E: CMP #$10 / BCC $5564 */
