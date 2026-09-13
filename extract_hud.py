@@ -209,6 +209,15 @@ def main():
                % (len(rows), ",".join("{%d,%d,%d,%d,%d}" % tuple(r) for r in rows)))
     out.append("static const HudCol HUD_PAL[%d]={%s};\n"
                % (len(pal), ",".join("{%d,%d,%d}" % c for c in pal)))
+    # $3473 pokes $6180 into COLPF2 on the way into the second row, and $5FA5 is what
+    # puts the belt's colour there. So whichever palette entry value 3 resolves to on the
+    # last line of that row IS the belt colour, and naming it lets the port substitute
+    # the live one instead of the one that happened to be up when this was captured.
+    # Not the first line of the row: the DLI does not wait for WSYNC, so the change lands
+    # part way along it and the capture shows it still carrying the row above's colour.
+    out.append("/* the palette entry that is COLPF2 on the belt row -- the belt's own\n"
+               " * colour ($5FA5 -> $6180 -> $3473), whatever it was when this was taken */\n")
+    out.append("#define HUD_BELT_PAL %d\n" % rows[2 * ROW_LINES - 1][3])
     out.append("/* the ippon markers ($324C), drawn as Players over the HUD at the\n"
                " * columns below; four rows of bitmap per marker */\n")
     out.append("static const uint8_t HUD_PIP[%d]={%s};\n"

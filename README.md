@@ -16,6 +16,7 @@ Bring your own if you want to re-derive anything:
 | `extracted/ram_true_64k.bin` | a 64K RAM dump of the running game | the emulator's monitor |
 | `extracted/scenes/*.bin` | per-scene RAM dumps | `capture_scenes.sh` |
 | `extracted/colour4/`, `extracted/signs/`, … | screen captures | `harvest_v2.sh`, `harvest_signs.sh` |
+| `extracted/palette/ramp_*.png` | the machine's 256 colours | `harvest_palette.sh` |
 
 **The port builds and runs without any of it** — everything under `generated/` is
 committed. What needs the originals is re-running the extractors and the parts of
@@ -47,7 +48,7 @@ original.
 **This is no longer a clean-room reimplementation.** The port now embeds data recovered from
 the original game: its animation and dispatch tables in `generated/frames.h`, all 53 of its
 fighter poses in colour in `generated/shapes_pm.h`, and all seven of its background stages
-in `generated/scenes.h`. The *code* is original C; the *data* is the 1998 game's. Bear
+in `generated/scenes.h`. The *code* is original C; the *data* is the 1984 game's. Bear
 that in mind before redistributing.
 
 All seven of the original's stages are present as its own bitmap data, rendered the way
@@ -75,7 +76,7 @@ make
 
 `F1` and `F2` stand in for the console keys the original reads from `CONSOL`.
 
-It opens on the high-score table with these bindings above it, holds that for fifteen
+It opens on the high-score table with these bindings above it, holds that for thirty
 seconds, and then plays a bout against itself with the music on and the effects off,
 until you press one of them. Lose a match and the referee holds up MATCH OVER; if your
 score makes the table you put three characters in with the movement keys -- left and
@@ -117,6 +118,13 @@ vertical placement.
 The referee is there too, captured the same way. He signals from the spot: `$6159` is
 how far through one of his three signalling actions he is, not where he is.
 
+The fighters bow. Before a bout both of them do, through the game's own move `$1C`
+(`$2DC0`), and the clock is held while they are in it (`$3981`); after one the winner
+does, which the game stages by writing the two poses straight into his shape (`$29AD`).
+The belt's name in the HUD is written in the belt's own colour (`$5F60` through the DLI
+at `$3473`), and the black belt, which has no colour of its own, takes its hue from the
+frame clock instead — so it shimmers.
+
 **Correction.** This section used to say that finishing an action takes a tick off the
 round counter, "so a round is a number of his actions". That is wrong. `$3972` calls the
 referee's step `$5807` only when `$D0 == 5`, a separate bonus stage that is not ported; an
@@ -137,7 +145,8 @@ which turns out to be the arena-clamp width rather than the drawn one. See
 - `pokey.h` — the original's music player (`$1F06`) and enough of POKEY to hear it
 - `generated/music.h` — the tune: 3 sequences, 27 patterns, 5 envelopes, both pitch tables
 - `extract_sfx.py` — regenerates the sound-effect data
-- `generated/timing.h` — the bout's frame counts and the 30-second round clock
+- `generated/timing.h` — the bout's frame counts, the 30-second round clock and the bow
+- `generated/palette.h` — what the 256 GTIA colour bytes look like, measured off the machine
 - `verify_music.c` / `verify_music.py` — `make verify-music`, including a diff against
   atari800's `-pokeyrec` register recording
 - `sfx.h` — the original's digitised sound effects (`$3A7C`/`$3AE0`)

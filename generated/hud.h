@@ -173,6 +173,9 @@ static const uint8_t HUD_TEMPLATE[80]={
 static const uint8_t HUD_LINE_COL[16][5]={
   {0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,3,4},{0,1,2,5,4},{0,1,2,5,4},{0,1,2,5,4},{0,1,2,5,4},{0,1,2,5,4},{0,1,2,5,4},{0,1,2,5,4}};
 static const HudCol HUD_PAL[6]={{4,4,4},{174,106,200},{117,131,221},{211,211,211},{189,113,121},{171,171,171}};
+/* the palette entry that is COLPF2 on the belt row -- the belt's own
+ * colour ($5FA5 -> $6180 -> $3473), whatever it was when this was taken */
+#define HUD_BELT_PAL 5
 /* the ippon markers ($324C), drawn as Players over the HUD at the
  * columns below; four rows of bitmap per marker */
 static const uint8_t HUD_PIP[31]={0xC3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0xE7,0xF3,0xF3,0xE7,0x00,0xE7,0xF3};

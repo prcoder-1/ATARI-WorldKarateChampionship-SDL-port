@@ -28,6 +28,46 @@
 #define T_FREEZE  0x80
 /* $2F7C: both fighters are placed at this x when a bout starts */
 #define T_START_X 0x54
+/* The ceremony.
+ *
+ * $2DC0, in the reset that opens a bout ($2D89, which also runs after every
+ * scoring blow): both fighters are handed move $1C, the bow. Always in a
+ * one-player game; with two people playing only while the clock is still
+ * full, so it opens a bout without interrupting one.
+ *
+ *   2DC0: LDX #$1C          the bow
+ *   2DC2: LDA $50 / AND $51 both human?
+ *   2DC6: BEQ $2DD0         no -- bow
+ *   2DC8: LDA $DC / CMP #$60 / BCS $2DD0   yes -- only on a full clock
+ *   2DCE: LDX #$00          otherwise just stand
+ *   2DD1: STA $00EC,Y / JSR $2783 ($530F)  start it
+ *
+ * $29AD, once a bout is over: the winner is not driven through the move but
+ * posed by hand, his shape written straight into $00DD,X. He goes down, is
+ * held there, and comes back up; each pose also steps him back one
+ * ($29B1/$29D6). When the bout ended on the clock rather than on points,
+ * $292F stands BOTH fighters up first.
+ *
+ *   292F: LDA #$30 / STA $DD / STA $DE     both upright (clock only)
+ *   29AD: LDA #$31 / STA $DD,X            the winner bends
+ *   29BB: LDX #$19 / JSR $2F30            hold
+ *   29C6: LDX #$32 / JSR $2F30            hold
+ *   29D2: LDA #$30 / STA $DD,X            and straightens
+ *   29DE: LDX #$19 / JSR $2F30            hold
+ *
+ * $1C's own frames run 48, 49, 48 -- the same two shapes -- so the pose the
+ * winner is put into by hand is the one the move would have reached. */
+#define MOVE_BOW  0x1C
+#define T_BOW_2P_CLOCK 0x60
+#define SHAPE_BOW_UP   48
+#define SHAPE_BOW_DOWN 49
+/* $292F stands both fighters in the same pose the winner returns to */
+#define SHAPE_BOUT_END 48
+#define T_BOW_DOWN 75   /* $29BB + $29C6: bent, then held */
+#define T_BOW_UP   25   /* $29DE: and upright before the game moves on */
+/* $2A1B: the last hold, after the ceremony and the time bonus, before the
+ * game decides between another bout and the high-score screen */
+#define T_BOUT_TAIL 50
 /* $3BF9: the main loop only takes a game tick once the vertical blank has
  * counted more than this many frames into $6121, so the fighters advance at
  * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.

@@ -29,6 +29,24 @@ static unsigned rnd(void) { rngstate = rngstate * 1103515245u + 12345u; return (
 
 static int failures;
 
+/* a scratch canvas, so a check can look at what hudDraw actually painted */
+static struct { int r, g, b; } paint[240][384];
+static void paintReset(void) { memset(paint, 0xFF, sizeof paint); }
+static void paintPx(int x, int y, int r, int g, int b)
+{
+    if (x >= 0 && x < 384 && y >= 0 && y < 240) {
+        paint[y][x].r = r; paint[y][x].g = g; paint[y][x].b = b;
+    }
+}
+static int paintCount(int r, int g, int b)
+{
+    int n = 0;
+    for (int y = 0; y < 240; y++)
+        for (int x = 0; x < 384; x++)
+            if (paint[y][x].r == r && paint[y][x].g == g && paint[y][x].b == b) n++;
+    return n;
+}
+
 static void check(int cond, const char* what)
 {
     printf("  %-52s %s\n", what, cond ? "ok" : "FAILED");
@@ -600,6 +618,125 @@ int main(void)
         printf("    limit 12 produced values %d..%d\n", lo, hi);
         check(bad == 0, "aiRandLimit(n) always returns [0,n)");
         check(lo == 0 && hi == 11, "and covers the whole range");
+    }
+
+    printf("the belt's colour ($5FA5)\n");
+    {
+        int fixed = 0;
+        for (int b = 0; b < HUD_BELTS; b++) {
+            if (!HUD_BELT_COLOUR[b]) continue;
+            fixed++;
+            AtariCol want = ATARI_PAL[HUD_BELT_COLOUR[b]];
+            int drift = 0;
+            for (unsigned f = 0; f < 512; f++) {
+                AtariCol got = hudBeltColour(b, f);
+                if (got.r != want.r || got.g != want.g || got.b != want.b) drift++;
+            }
+            if (drift) printf("    belt %d moves with the clock and should not\n", b);
+            if (drift) failures++;
+        }
+        printf("    %d belts have a colour of their own, %d has none\n",
+               fixed, HUD_BELTS - fixed);
+        check(fixed == HUD_BELTS - 1, "exactly one belt is left without a colour");
+        check(HUD_BELT_COLOUR[HUD_BELTS - 1] == 0, "and it is the last one, the black belt");
+
+        /* $5FAA: hue from the clock, luminance pinned at $0A. So the black belt walks
+         * all sixteen hues, changes once every sixteen frames, and comes back round
+         * after 256 -- which is the shimmer, and it must not touch the other five. */
+        int black = HUD_BELTS - 1, hues = 0, steps = 0, wrong = 0;
+        AtariCol seen[16];
+        for (int h = 0; h < 16; h++) {
+            AtariCol want = ATARI_PAL[(h << 4) | 0x0A];
+            AtariCol got = hudBeltColour(black, (unsigned)(h << 4));
+            seen[h] = got;
+            if (got.r != want.r || got.g != want.g || got.b != want.b) wrong++;
+            hues++;
+        }
+        /* Every frame, not just the sixteen sampled: the colour is exactly what the
+         * clock's high nibble and luminance $0A name. */
+        int off = 0;
+        for (unsigned f = 0; f < 512; f++) {
+            AtariCol want = ATARI_PAL[(f & 0xF0) | 0x0A], got = hudBeltColour(black, f);
+            if (got.r != want.r || got.g != want.g || got.b != want.b) off++;
+        }
+        for (unsigned f = 1; f < 512; f++)
+            if ((((f - 1) & 0xF0) | 0x0A) != ((f & 0xF0) | 0x0A)) steps++;
+        int distinct = 0;
+        for (int i = 0; i < 16; i++) {
+            int dup = 0;
+            for (int j = 0; j < i; j++)
+                if (seen[i].r == seen[j].r && seen[i].g == seen[j].g && seen[i].b == seen[j].b) dup = 1;
+            if (!dup) distinct++;
+        }
+        /* 16 hues but 15 colours: at luminance $0A this machine renders hue 1 and hue 15
+         * the same, so one of the 32 steps in 512 frames is invisible. That is the
+         * palette's doing, not the port's, which is why the check is on the byte. */
+        printf("    the black belt steps %d times in 512 frames, through %d colours\n",
+               steps, distinct);
+        check(wrong == 0, "$5FAA: its hue is the clock's, its luminance $0A");
+        check(off == 0, "and that holds on every frame, not just the sixteen sampled");
+        check(hues == 16, "all sixteen hues are reachable");
+        check(steps == 512 / 16 - 1, "it changes once every sixteen frames");
+        {
+            AtariCol a = hudBeltColour(black, 7), b = hudBeltColour(black, 7 + 256);
+            check(a.r == b.r && a.g == b.g && a.b == b.b, "and comes back round after 256");
+        }
+        check(distinct >= 12, "the hues it walks are not all the same colour");
+
+        /* and it has to reach the screen: draw the HUD and count the belt's colour in
+         * the pixels, which is the whole path from $5F60 through the DLI's COLPF2. */
+        uint8_t cells[HUD_CELLS];
+        hudCompose(cells, 1, 0, 0, 0x30, 0, 40000, 0, 0, 0, 0);
+        check(hudBelt(40000) == black, "40000 points is the black belt ($5F66)");
+        for (int i = 0; i < 3; i++) {
+            unsigned f = (unsigned)(i << 4);
+            AtariCol want = hudBeltColour(black, f);
+            paintReset();
+            hudDraw(cells, 384, 240, paintPx, black, f);
+            printf("    frame %3u: %d pixels are the belt's %d,%d,%d\n",
+                   f, paintCount(want.r, want.g, want.b), want.r, want.g, want.b);
+            check(paintCount(want.r, want.g, want.b) > 0,
+                  "the belt row is painted in the colour the clock names");
+        }
+        paintReset();
+        hudDraw(cells, 384, 240, paintPx, 0, 0);
+        AtariCol white = ATARI_PAL[HUD_BELT_COLOUR[0]];
+        check(paintCount(white.r, white.g, white.b) > 0,
+              "and belt 0 paints it in $0C, the white belt's own");
+    }
+
+    printf("the bow, before a bout and after one ($2DC0 / $29AD)\n");
+    {
+        /* The pre-bout bow is move $1C run through the machine; the winner's is two
+         * shapes written by hand. They have to be the same two shapes, or the winner
+         * would strike a pose the bow never reaches. */
+        int up = 0, down = 0, other = 0;
+        for (int f = MOVE_FRAME_START[MOVE_BOW]; f < MOVE_FRAME_START[MOVE_BOW + 1]; f++) {
+            int s = FRAME_SHAPE[f];
+            if (s == SHAPE_BOW_UP) up++;
+            else if (s == SHAPE_BOW_DOWN) down++;
+            else other++;
+        }
+        printf("    move $%02X is %d frames: %d upright, %d bent, %d neither\n",
+               MOVE_BOW, MOVE_FRAME_START[MOVE_BOW + 1] - MOVE_FRAME_START[MOVE_BOW],
+               up, down, other);
+        check(other == 0, "the bow uses only the two shapes the winner is posed in");
+        check(up > 0 && down > 0, "and it uses both of them");
+        check(FRAME_SHAPE[MOVE_FRAME_START[MOVE_BOW]] == SHAPE_BOW_UP,
+              "$29D2: it starts from the pose the winner returns to");
+        check(SHAPE_BOUT_END == SHAPE_BOW_UP,
+              "$292F stands both fighters in that same pose");
+
+        /* and it has to finish by itself, like any other move */
+        Fighter f;
+        reset(&f, 0x40, 0);
+        f.isHuman = 0;
+        fgtStartMove(&f, MOVE_BOW, rnd);
+        check(f.move == MOVE_BOW, "$530F starts it");
+        int n = 0;
+        while (f.move == MOVE_BOW && n < 600) { fgtUpdate(&f, 0, rnd); n++; }
+        printf("    it runs itself out in %d ticks\n", n);
+        check(n < 600, "and it ends on its own");
     }
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILURES" : "all checks passed",

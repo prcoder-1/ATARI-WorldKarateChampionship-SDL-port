@@ -465,7 +465,11 @@ static void drawHUD(void)
     hudCompose(hudCells, p1.isHuman, p2.isHuman, demo, roundClock,
                level, fScore[0], fScore[1],
                fWins[0], fWins[1], 0);
-    hudDraw(hudCells, LW, LH, setpx1);
+    /* $5F66 leaves the belt alone in a two-player game, and so does the DLI at $347E:
+     * the row keeps whatever colour it had. */
+    int belt = (p1.isHuman && p2.isHuman)
+             ? -1 : hudBelt(p1.isHuman ? fScore[0] : fScore[1]);
+    hudDraw(hudCells, LW, LH, setpx1, belt, frameCount);
     hudMarkers(fPoints[0], fPoints[1], p1.isHuman, p2.isHuman, LW, LH, setpx1);
 }
 
@@ -489,6 +493,38 @@ static void resetPositions(void)
     /* $0050,y: nonzero = joystick, zero = the CPU routine */
     p1.isHuman=!p1isCPU;
     p2.isHuman=!p2.isCPU;
+    /* $2DC0: and then both of them bow. Unconditionally unless two people are playing,
+     * in which case only while the clock is still full -- this reset also runs after
+     * every scoring blow ($290E), and a bout in progress is not opened again. */
+    if(!(p1.isHuman && p2.isHuman) || roundClock >= T_BOW_2P_CLOCK){
+        fgtStartMove(&p1, MOVE_BOW, rnd);
+        fgtStartMove(&p2, MOVE_BOW, rnd);
+    }
+}
+
+/* $2916: the end of a bout, and the winner's bow.
+ *
+ * He is not driven through move $1C for this: $29AD writes his shape straight into
+ * $00DD,X, holds it, and $29D2 writes the upright one back, each pose stepping him back
+ * one ($29B1/$29D6). They are the two shapes move $1C animates through anyway.
+ *
+ * onClock is $292B's test: when the clock ran out rather than a fighter reaching four
+ * points, $292F stands BOTH of them up first. winner < 0 is the port's drawn bout, which
+ * the ROM does not have -- it always breaks the tie ($2980..$2997) -- so nobody bows.
+ */
+static int bowWinner = -1;                       /* $00D1 */
+
+static void boutEnd(int winner, int onClock)
+{
+    if(onClock){ p1.shape = SHAPE_BOUT_END; p2.shape = SHAPE_BOUT_END; }
+    bowWinner = winner;
+    if(winner >= 0){
+        Fighter* w = winner ? &p2 : &p1;
+        w->shape = SHAPE_BOW_DOWN;               /* $29AD */
+        w->x--;                                  /* $29B1 */
+    }
+    gstate = G_ROUND_END;
+    stateTimer = T_BOW_DOWN + T_BOW_UP + T_BOUT_TAIL;
 }
 
 /* The attract state: the game plays itself. $50 and $51 are both zero, so $3D04 drives
@@ -644,11 +680,10 @@ static void vblank(void)
         /* $2BA2: the bout is over when the clock reaches zero, or when either fighter
          * has four points. Nothing else ends it -- the referee does not time it. */
         if(roundClock==0){
-            gstate=G_ROUND_END; stateTimer=T_BEGIN;
             /* the signs name the fighters by their gi, RED and WHITE */
-            if(fPoints[0]>fPoints[1]){ fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,""); }
-            else if(fPoints[1]>fPoints[0]){ fWins[1]++; boutLost=1; signShow("RED",T_BEGIN); strcpy(banner,""); }
-            else { signIndex=-1; strcpy(banner,"DRAW"); }
+            if(fPoints[0]>fPoints[1]){ fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,""); boutEnd(0,1); }
+            else if(fPoints[1]>fPoints[0]){ fWins[1]++; boutLost=1; signShow("RED",T_BEGIN); strcpy(banner,""); boutEnd(1,1); }
+            else { signIndex=-1; strcpy(banner,"DRAW"); boutEnd(-1,1); }
         }
     }
     if(signTimer>0 && --signTimer==0) signIndex=-1;
@@ -753,17 +788,25 @@ int main(int argc,char**argv)
                             /* $2BA2: four points ends the bout */
                             if(fPoints[0]>=4){
                                 fWins[0]++; signShow("WHITE",T_BEGIN); strcpy(banner,"");
-                                gstate=G_ROUND_END; stateTimer=T_BEGIN;
+                                boutEnd(0,0);   /* $292B: on points, so nobody is stood up */
                             } else if(fPoints[1]>=4){
                                 fWins[1]++; boutLost=1;
                                 signShow("RED",T_BEGIN); strcpy(banner,"");
-                                gstate=G_ROUND_END; stateTimer=T_BEGIN;
+                                boutEnd(1,0);
                             }
                             else { resetPositions(); gstate=G_FIGHT; }
                         }
                         break;
                     case G_ROUND_END:
-                        if(--stateTimer<=0){
+                        --stateTimer;
+                        /* $29D2: the hold is over, so he comes back up, a step further
+                         * back again. What follows is $2A1B's wait. */
+                        if(bowWinner>=0 && stateTimer==T_BOW_UP+T_BOUT_TAIL){
+                            Fighter* w = bowWinner ? &p2 : &p1;
+                            w->shape = SHAPE_BOW_UP;
+                            w->x--;
+                        }
+                        if(stateTimer<=0){
                             /* Nothing is advanced here: the skill rises with the level
                              * once per bout ($2D09), the scene turns over on the bout
                              * count in newBout(), and the belt is read off the score.

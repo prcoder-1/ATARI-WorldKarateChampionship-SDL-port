@@ -131,6 +131,66 @@ def main():
     emit_timing(d)
 
 
+def ceremony(d):
+    """The bow, read out of the two places that stage it.
+
+    Before a bout ($2D89's reset loop) both fighters are handed a move; after one, the
+    winner is put through two poses by hand. Both are immediates, so they are read from
+    the dump at the instruction rather than typed in here."""
+    def imm(addr, op, what):
+        if d[addr] != op:
+            raise SystemExit("$%04X is not the %s it should be (opcode $%02X)"
+                             % (addr, what, d[addr]))
+        return d[addr + 1]
+
+    t = []
+    t.append("/* The ceremony.\n"
+             " *\n"
+             " * $2DC0, in the reset that opens a bout ($2D89, which also runs after every\n"
+             " * scoring blow): both fighters are handed move $1C, the bow. Always in a\n"
+             " * one-player game; with two people playing only while the clock is still\n"
+             " * full, so it opens a bout without interrupting one.\n"
+             " *\n"
+             " *   2DC0: LDX #$1C          the bow\n"
+             " *   2DC2: LDA $50 / AND $51 both human?\n"
+             " *   2DC6: BEQ $2DD0         no -- bow\n"
+             " *   2DC8: LDA $DC / CMP #$60 / BCS $2DD0   yes -- only on a full clock\n"
+             " *   2DCE: LDX #$00          otherwise just stand\n"
+             " *   2DD1: STA $00EC,Y / JSR $2783 ($530F)  start it\n"
+             " *\n"
+             " * $29AD, once a bout is over: the winner is not driven through the move but\n"
+             " * posed by hand, his shape written straight into $00DD,X. He goes down, is\n"
+             " * held there, and comes back up; each pose also steps him back one\n"
+             " * ($29B1/$29D6). When the bout ended on the clock rather than on points,\n"
+             " * $292F stands BOTH fighters up first.\n"
+             " *\n"
+             " *   292F: LDA #$30 / STA $DD / STA $DE     both upright (clock only)\n"
+             " *   29AD: LDA #$31 / STA $DD,X            the winner bends\n"
+             " *   29BB: LDX #$19 / JSR $2F30            hold\n"
+             " *   29C6: LDX #$32 / JSR $2F30            hold\n"
+             " *   29D2: LDA #$30 / STA $DD,X            and straightens\n"
+             " *   29DE: LDX #$19 / JSR $2F30            hold\n"
+             " *\n"
+             " * $1C's own frames run 48, 49, 48 -- the same two shapes -- so the pose the\n"
+             " * winner is put into by hand is the one the move would have reached. */\n")
+    t.append("#define MOVE_BOW  0x%02X\n" % imm(0x2DC0, 0xA2, "LDX #$1C that starts the bow"))
+    t.append("#define T_BOW_2P_CLOCK 0x%02X\n"
+             % imm(0x2DCA, 0xC9, "CMP #$60 that gates the two-player bow"))
+    t.append("#define SHAPE_BOW_UP   %d\n" % imm(0x29D2, 0xA9, "LDA #$30, the winner upright"))
+    t.append("#define SHAPE_BOW_DOWN %d\n" % imm(0x29AD, 0xA9, "LDA #$31, the winner bent"))
+    up = imm(0x292F, 0xA9, "LDA #$30 that stands both fighters up")
+    t.append("/* $292F stands both fighters in the same pose the winner returns to */\n")
+    t.append("#define SHAPE_BOUT_END %d\n" % up)
+    t.append("#define T_BOW_DOWN %d   /* $29BB + $29C6: bent, then held */\n"
+             % (imm(0x29BB, 0xA2, "LDX #$19") + imm(0x29C6, 0xA2, "LDX #$32")))
+    t.append("#define T_BOW_UP   %d   /* $29DE: and upright before the game moves on */\n"
+             % imm(0x29DE, 0xA2, "LDX #$19"))
+    t.append("/* $2A1B: the last hold, after the ceremony and the time bonus, before the\n"
+             " * game decides between another bout and the high-score screen */\n")
+    t.append("#define T_BOUT_TAIL %d\n" % imm(0x2A1B, 0xA2, "LDX #$32"))
+    return "".join(t)
+
+
 def emit_timing(d):
     """The bout's timing constants, all counted in video frames."""
     t = []
@@ -162,6 +222,7 @@ def emit_timing(d):
     t.append("#define T_FREEZE  0x%02X\n" % 0x80)
     t.append("/* $2F7C: both fighters are placed at this x when a bout starts */\n")
     t.append("#define T_START_X 0x%02X\n" % 0x54)
+    t.append(ceremony(d))
     t.append("/* $3BF9: the main loop only takes a game tick once the vertical blank has\n"
              " * counted more than this many frames into $6121, so the fighters advance at\n"
              " * one tick per divider+1 video frames -- 10 Hz at the default setting, not 60.\n"

@@ -663,6 +663,94 @@ with **0 differing pixels** (`make verify-hud`). The ippon markers are Player/Mi
 objects built by `$31E1`, not playfield, and are excluded from that comparison; they
 have their own, below.
 
+### The belt's name is written in the belt's own colour (`$5FA5`)
+
+The second HUD row is not a fixed colour. `$5F66`, having read the belt off the score,
+looks its colour up and hands it to the display list:
+
+```
+5FA2: STY $616A        the belt, 0..5
+5FA5: LDA $5F60,Y      its colour byte
+5FA8: BNE $5FB0        it has one
+5FAA: LDA $14          it has none -- take the hue from the frame clock,
+5FAC: AND #$F0
+5FAE: ORA #$0A           at a fixed luminance
+5FB0: STA $6180
+```
+
+and `$3473`, the first DLI, pokes `$6180` into `COLPF2` on the way into that row:
+
+```
+3473: PHA / (install $3506 as the next handler)
+347E: LDA $50 / AND $51 / BNE $348A     two people playing: leave it alone
+3484: LDA $6180 / STA $D018
+```
+
+`$5F60` is `0C 1C BA 4A 18 00` — grey, orange, green, purple, brown, and **zero for the
+black belt**, which is the sentinel that sends `$5FAA` to the clock. So the black belt has
+no colour of its own: its hue steps through all sixteen, one step every sixteen frames,
+coming back round after 256. That is the shimmer.
+
+It is one register for the whole row, and it is skipped entirely when two people are
+playing — the same gate `$5F66` opens with.
+
+**This does not reach the high-score table.** Its six belt names live in the ground text
+region, which the display list runs as twelve mode 4 rows from `$0800` (`$62CC`..`$62D9`)
+with **no DLI between them** — the only one in that region is on the last row. All six
+share one `COLPF2`, so per-row belt colours are not something the original can do there,
+and the port does not invent them.
+
+The colour bytes needed a palette the port did not have, everything in it having been
+measured as RGB off captures. `harvest_palette.sh` measures one: it points `VVBLKI` at a
+routine that turns off NMIs and playfield DMA and walks `COLBK` down the frame a scanline
+at a time, so a grab is a column of 240 known colours. Two passes from different starting
+bytes cover all 256. `extract_palette.py` reads them back, works out which row is which
+byte from the grey run hue 0 opens with, and checks the passes against each other — they
+overlap over most of the range — before emitting `generated/palette.h`. Independent
+confirmation: every colour `invert_palette.py` had already recovered off the scene
+captures turns up in it at a sensible byte, `(4,4,4)` at `$00`, `(171,171,171)` at `$0C`,
+`(119,72,11)` at `$16`.
+
+### The ceremony: bowing before a bout and after one
+
+Two different mechanisms, one pair of poses.
+
+**Before.** `$2D89`, the reset that opens a bout — and which also runs after every scoring
+blow (`$290E`) — hands both fighters move `$1C`:
+
+```
+2DC0: LDX #$1C                     the bow
+2DC2: LDA $50 / AND $51 / BEQ      both human?
+2DC8: LDA $DC / CMP #$60 / BCS       yes: only while the clock is still full
+2DCE: LDX #$00                       otherwise just stand
+2DD1: STA $00EC,Y / JSR $2783      $530F starts it
+```
+
+So in a one-player game they bow at the start of every bout and again after every scoring
+blow; with two people playing, only when the clock has not started running. `$3981` holds
+the clock while fighter 0 is in move `$1C`, so the ceremony does not eat the bout.
+
+**After.** The winner is not driven through the move — he is posed by hand, his shape
+written straight into `$00DD,X`, and each pose steps him back one:
+
+```
+292F: LDA #$30 / STA $DD / STA $DE   both upright (only if the clock ran out, $292B)
+29AD: LDA #$31 / STA $DD,X           the winner bends
+29B1: DEC $E0,X
+29BB: LDX #$19 / JSR $2F30           hold 25
+29C6: LDX #$32 / JSR $2F30           hold 50
+29D2: LDA #$30 / STA $DD,X           and straightens
+29DE: LDX #$19 / JSR $2F30           hold 25
+2A1B: LDX #$32 / JSR $2F30           and a last 50 before the next bout or the table
+```
+
+Shapes `$30`/`$31` are 48 and 49 — exactly the two that move `$1C` animates through
+(48, 49, 48 over its fourteen frames), which is what ties the hand-posed version to the
+driven one. `make verify-fighter` checks that: the bow must use those two shapes and no
+others, and must start on the one the winner returns to.
+
+Note this happens at the end of **every** bout, not only the last one.
+
 ### The ippon markers
 
 Three bold dots per fighter, and **not a row**: two Points on the upper line and one

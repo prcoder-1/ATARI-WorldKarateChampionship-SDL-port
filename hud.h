@@ -27,6 +27,7 @@
 #include <string.h>
 #include "generated/hud.h"
 #include "generated/pips.h"
+#include "generated/palette.h"
 
 #define HUD_CELLS (HUD_COLS * HUD_ROWS)
 
@@ -52,6 +53,26 @@ static int hudBelt(int score)
     for (int i = 0; i < HUD_BELTS; i++)
         if (v < HUD_BELT_THRESHOLD[i]) return i;
     return HUD_BELTS - 1;
+}
+
+/* $5FA5: the belt's name is written in the belt's own colour.
+ *
+ *   5FA5: LDA $5F60,Y     the belt's colour byte
+ *   5FA8: BNE $5FB0       it has one: use it
+ *   5FAA: LDA $14         it does not -- the black belt's entry is zero -- so take
+ *   5FAC: AND #$F0          the hue from the frame clock and
+ *   5FAE: ORA #$0A          hold the luminance at $0A
+ *   5FB0: STA $6180       which $3473 pokes into COLPF2 on the way into the belt's row
+ *
+ * So five belts have a fixed colour and the black one has none: its hue steps through
+ * all sixteen, one step every sixteen frames, which is the shimmer. The colours are
+ * bytes, not pixels, so they go through the measured palette (extract_palette.py).
+ */
+static AtariCol hudBeltColour(int belt, unsigned frame)
+{
+    int c = HUD_BELT_COLOUR[belt];
+    if (!c) c = (int)((frame & 0xF0) | 0x0A);   /* $5FAA: the black belt */
+    return ATARI_PAL[c & 0xFF];
 }
 
 /* the game's character codes: digits from $00, letters from $0B, space $0A */
@@ -138,9 +159,16 @@ static void hudCompose(uint8_t* s, int p1Human, int p2Human, int demo,
 }
 
 /* Render the two rows. setpx(x, y, r, g, b) is supplied by the caller. */
+/* belt < 0 leaves the colour the capture was taken with; otherwise the belt row is drawn
+ * in that belt's colour, which is what $5FA5 and the DLI at $3473 between them do. */
 static void hudDraw(const uint8_t* s, int screenW, int screenH,
-                    void (*setpx)(int, int, int, int, int))
+                    void (*setpx)(int, int, int, int, int), int belt, unsigned frame)
 {
+    HudCol bc = { 0, 0, 0 };
+    if (belt >= 0) {
+        AtariCol a = hudBeltColour(belt, frame);
+        bc.r = a.r; bc.g = a.g; bc.b = a.b;
+    }
     for (int row = 0; row < HUD_ROWS; row++) {
         for (int line = 0; line < HUD_ROW_LINES; line++) {
             int y = HUD_TOP + row * HUD_ROW_LINES + line;
@@ -152,7 +180,8 @@ static void hudDraw(const uint8_t* s, int screenW, int screenH,
                 int alt = (c & 0x80) ? 1 : 0;
                 for (int k = 0; k < 4; k++) {
                     int v = (glyph >> (6 - 2 * k)) & 3;
-                    HudCol p = HUD_PAL[lc[v == 3 ? (alt ? 4 : 3) : v]];
+                    int idx = lc[v == 3 ? (alt ? 4 : 3) : v];
+                    HudCol p = (belt >= 0 && idx == HUD_BELT_PAL) ? bc : HUD_PAL[idx];
                     int x = HUD_LEFT + (col * 4 + k) * HUD_CLOCKS_PER_PX;
                     if (x + 1 < screenW) {
                         setpx(x, y, p.r, p.g, p.b);

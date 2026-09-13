@@ -5,7 +5,7 @@ LDLIBS  += -lm
 
 worldkarate: worldkarate.c fighter.h ai.h pokey.h sfx.h hud.h atari_gfx.h game_data.h \
              generated/shapes_pm.h generated/scenes.h generated/music.h generated/sfx.h \
-             generated/hud.h generated/signs.h generated/pips.h generated/hit.h generated/popup.h generated/hiscore.h hit_test.h hiscore.h
+             generated/hud.h generated/signs.h generated/pips.h generated/hit.h generated/popup.h generated/hiscore.h generated/palette.h hit_test.h hiscore.h
 	$(CC) $(CFLAGS) $< -o $@ $(PKG) $(LDLIBS)
 
 run: worldkarate
@@ -72,7 +72,13 @@ verify-signs:
 verify-hud:
 	python3 extract_hud.py
 
-verify: verify-scenes verify-sprites verify-signs verify-pips verify-popup verify-hiscore verify-fighter verify-hit verify-music verify-sfx verify-hud
+# The palette extractor is its own check: two ramps taken from different starting bytes
+# have to agree everywhere they overlap, every 2n/2n+1 pair has to match because GTIA
+# ignores the low bit, and all 256 have to be accounted for, or it emits nothing.
+verify-palette:
+	python3 extract_palette.py
+
+verify: verify-scenes verify-sprites verify-signs verify-pips verify-popup verify-hiscore verify-palette verify-fighter verify-hit verify-music verify-sfx verify-hud
 
 clean:
 	rm -f worldkarate /tmp/verify_scenes /tmp/verify_fighter /tmp/verify_music /tmp/verify_sfx /tmp/verify_hit
